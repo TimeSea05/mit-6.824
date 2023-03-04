@@ -20,6 +20,8 @@ const (
 	ReduceFailed
 )
 
+const TimeOut = 10
+
 type workerStat struct {
 	name      string // worker name
 	available bool   // whether or not this worker is functioning
@@ -53,7 +55,6 @@ type Coordinator struct {
 
 // add record of workers to coordinator
 func (c *Coordinator) RegisterWorker(name WorkerRegisterArgs, workerInfo *WorkerRegisterReply) error {
-	workerInfo.ID = len(c.workerStats)
 	if name == "" {
 		workerInfo.Name = "worker-" + strconv.Itoa(workerInfo.ID)
 	} else {
@@ -64,6 +65,7 @@ func (c *Coordinator) RegisterWorker(name WorkerRegisterArgs, workerInfo *Worker
 	c.workerStatsLock.Lock()
 	defer c.workerStatsLock.Unlock()
 
+	workerInfo.ID = len(c.workerStats)
 	newWorkerStat := workerStat{
 		name:      workerInfo.Name,
 		available: true,
@@ -77,8 +79,11 @@ func (c *Coordinator) RegisterWorker(name WorkerRegisterArgs, workerInfo *Worker
 // ID: worker ID
 // filename: map task name(filename)
 func (c *Coordinator) AssignMapTask(workerID int, reply *AssignMapTaskReply) (err error) {
-	workerName := c.workerStats[workerID].name
 	err = nil
+
+	c.workerStatsLock.Lock()
+	workerName := c.workerStats[workerID].name
+	c.workerStatsLock.Unlock()
 
 	c.mapTasksStatsLock.Lock()
 	defer c.mapTasksStatsLock.Unlock()
@@ -110,8 +115,8 @@ func (c *Coordinator) AssignMapTask(workerID int, reply *AssignMapTaskReply) (er
 // tasks: name of finished map task(filename)
 // updated: whether or not coordinator has been notified
 func (c *Coordinator) UpdateMapTaskState(mapTaskID int, updated *bool) error {
-	c.workerStatsLock.Lock()
-	defer c.workerStatsLock.Unlock()
+	c.mapTasksStatsLock.Lock()
+	defer c.mapTasksStatsLock.Unlock()
 
 	c.mapTasksStats[mapTaskID].status = MapFinished
 	c.mapTasksStats[mapTaskID].worker = ""
@@ -122,13 +127,13 @@ func (c *Coordinator) UpdateMapTaskState(mapTaskID int, updated *bool) error {
 
 // check if all map tasks has been finished
 func (c *Coordinator) CheckMapTasksFinished(arg int, reply *bool) (err error) {
+	c.mapTasksStatsLock.Lock()
+	defer c.mapTasksStatsLock.Unlock()
+
 	if c.isAllMapTasksFinished {
 		*reply = true
 		return
 	}
-
-	c.mapTasksStatsLock.Lock()
-	defer c.mapTasksStatsLock.Unlock()
 
 	for _, state := range c.mapTasksStats {
 		if state.status != MapFinished {
@@ -144,7 +149,9 @@ func (c *Coordinator) CheckMapTasksFinished(arg int, reply *bool) (err error) {
 
 // assign tasks for reducers
 func (c *Coordinator) AssignReduceTask(workerID int, reduceTaskID *int) error {
+	c.workerStatsLock.Lock()
 	workerName := c.workerStats[workerID].name
+	c.workerStatsLock.Unlock()
 
 	c.reduceTasksStatsLock.Lock()
 	defer c.reduceTasksStatsLock.Unlock()
@@ -180,13 +187,13 @@ func (c *Coordinator) UpdateReduceTaskState(reduceTaskID int, updated *bool) err
 }
 
 func (c *Coordinator) CheckReduceTasksFinished(arg int, reply *bool) error {
+	c.reduceTasksStatsLock.Lock()
+	defer c.reduceTasksStatsLock.Unlock()
+
 	if c.isAllReduceTasksFinished {
 		*reply = true
 		return nil
 	}
-
-	c.reduceTasksStatsLock.Lock()
-	defer c.reduceTasksStatsLock.Unlock()
 
 	for _, state := range c.reduceTasksStats {
 		if state.status != ReduceFinished {
