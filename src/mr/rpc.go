@@ -28,6 +28,11 @@ type AssignMapTaskReply struct {
 	Name string
 }
 
+type CheckTaskFinishedReply struct {
+	AllFinished   bool
+	AnyTaskFailed bool
+}
+
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
 // Can't use the current directory since

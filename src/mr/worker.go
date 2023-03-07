@@ -88,28 +88,14 @@ func doMap(mapf func(string, string) []KeyValue, workerInfo *WorkerRegisterReply
 		}
 
 		// inform the coordinator that map tasks in `mapTasks` has finished
+		// if coordinator has marked this map task as failed
+		// which means this worker is not that reliable
+		// just call os.Exit
 		var informed bool
-		for {
-			call("Coordinator.UpdateMapTaskState", mapTaskInfo.ID, &informed)
-			if informed {
-				break
-			}
+		call("Coordinator.UpdateMapTaskState", mapTaskInfo.ID, &informed)
+		if !informed {
+			os.Exit(1)
 		}
-	}
-}
-
-// after all map tasks assigned by coordinator has been finished
-// this worker should wait until all the other workers finish their map tasks
-// then this worker can ask coordinator for reduce tasks
-func waitToReduce() {
-	var isAllMapTasksFinished bool
-	for {
-		call("Coordinator.CheckMapTasksFinished", 0, &isAllMapTasksFinished)
-		if isAllMapTasksFinished {
-			break
-		}
-
-		time.Sleep(time.Second)
 	}
 }
 
@@ -163,7 +149,6 @@ func doReduce(reducef reduceFuncType, workerInfo *WorkerRegisterReply) {
 			}
 
 			file.Close()
-			os.Remove(filename)
 		}
 
 		// create reduce output file
@@ -198,13 +183,19 @@ func doReduce(reducef reduceFuncType, workerInfo *WorkerRegisterReply) {
 		}
 		reduceOutputFile.Close()
 
+		// delete intermediate files
+		for _, filename := range intmFilesNames {
+			os.Remove(filename)
+		}
+
 		// inform coordinator that this reduce task has finished
-		var updated bool
-		for {
-			call("Coordinator.UpdateReduceTaskState", reduceTaskID, &updated)
-			if updated {
-				break
-			}
+		// if coordinator has marked this reduce task as failed
+		// which means this worker is not that reliable
+		// just call os.Exit
+		var informed bool
+		call("Coordinator.UpdateReduceTaskState", reduceTaskID, &informed)
+		if !informed {
+			os.Exit(1)
 		}
 	}
 }
@@ -216,17 +207,37 @@ func Worker(mapf mapFuncType, reducef reduceFuncType) {
 	call("Coordinator.RegisterWorker", "", &workerInfo)
 
 	doMap(mapf, &workerInfo)
-	waitToReduce()
+
+	// after all map tasks assigned by coordinator has been finished
+	// this worker should wait until all the other workers finish their map tasks
+	// then this worker can ask coordinator for reduce tasks
+	var mapCheckReply CheckTaskFinishedReply
+	for {
+		call("Coordinator.CheckMapTasksFinished", 0, &mapCheckReply)
+		if mapCheckReply.AllFinished {
+			break
+		}
+
+		if mapCheckReply.AnyTaskFailed {
+			doMap(mapf, &workerInfo)
+		}
+		time.Sleep(time.Second)
+	}
+
 	doReduce(reducef, &workerInfo)
 
 	// continuously check if all reduce tasks has finished
 	// if `isAllReduceTasksFinshed` is updated, or call failed(return false)
 	// then break the loop to exit
-	var isAllReduceTasksFinished bool
+	var reduceCheckReply CheckTaskFinishedReply
 	for {
-		callResult := call("Coordinator.CheckReduceTasksFinished", 0, &isAllReduceTasksFinished)
-		if isAllReduceTasksFinished || !callResult {
+		callResult := call("Coordinator.CheckReduceTasksFinished", 0, &reduceCheckReply)
+		if reduceCheckReply.AllFinished || !callResult {
 			break
+		}
+
+		if reduceCheckReply.AnyTaskFailed {
+			doReduce(reducef, &workerInfo)
 		}
 
 		time.Sleep(time.Second)

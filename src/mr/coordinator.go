@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 const (
@@ -28,8 +29,9 @@ type workerStat struct {
 }
 
 type taskState struct {
-	worker string // which worker runs this map task
-	status int    // state of map task, like `MapExecuting`
+	worker     string    // which worker runs this map task
+	status     int       // state of map task, like `MapExecuting`
+	assignTime time.Time // time coordinator assigned this task to a worker
 }
 
 type Coordinator struct {
@@ -51,10 +53,56 @@ type Coordinator struct {
 	isAllReduceTasksFinished bool
 }
 
+func (c *Coordinator) findTimeOutTasks() {
+	// first find timeout map tasks
+	c.mapTasksStatsLock.Lock()
+	if !c.isAllMapTasksFinished {
+		for id, state := range c.mapTasksStats {
+			if state.status == MapExecuting && int(time.Since(state.assignTime).Seconds()) >= TimeOut {
+				c.mapTasksStats[id].status = MapFailed
+				failedWorkerName := c.mapTasksStats[id].worker
+
+				c.workerStatsLock.Lock()
+				for workerID, workerStat := range c.workerStats {
+					if workerStat.name == failedWorkerName {
+						c.workerStats[workerID].available = false
+					}
+				}
+				c.workerStatsLock.Unlock()
+			}
+		}
+	}
+	c.mapTasksStatsLock.Unlock()
+
+	// second find timeout reduce tasks
+	c.reduceTasksStatsLock.Lock()
+	if !c.isAllReduceTasksFinished {
+		for id, state := range c.reduceTasksStats {
+			if state.status == ReduceExecuting && int(time.Since(state.assignTime).Seconds()) >= TimeOut {
+				c.reduceTasksStats[id].status = ReduceFailed
+				failedWorkerName := c.reduceTasksStats[id].worker
+
+				c.workerStatsLock.Lock()
+				for workerID, workerStat := range c.workerStats {
+					if workerStat.name == failedWorkerName {
+						c.workerStats[workerID].available = false
+					}
+				}
+				c.workerStatsLock.Unlock()
+			}
+		}
+	}
+	c.reduceTasksStatsLock.Unlock()
+}
+
 // Your code here -- RPC handlers for the worker to call.
 
 // add record of workers to coordinator
 func (c *Coordinator) RegisterWorker(name WorkerRegisterArgs, workerInfo *WorkerRegisterReply) error {
+	c.workerStatsLock.Lock()
+	defer c.workerStatsLock.Unlock()
+
+	workerInfo.ID = len(c.workerStats)
 	if name == "" {
 		workerInfo.Name = "worker-" + strconv.Itoa(workerInfo.ID)
 	} else {
@@ -62,10 +110,6 @@ func (c *Coordinator) RegisterWorker(name WorkerRegisterArgs, workerInfo *Worker
 	}
 	workerInfo.NReduce = c.nReduce
 
-	c.workerStatsLock.Lock()
-	defer c.workerStatsLock.Unlock()
-
-	workerInfo.ID = len(c.workerStats)
 	newWorkerStat := workerStat{
 		name:      workerInfo.Name,
 		available: true,
@@ -79,8 +123,6 @@ func (c *Coordinator) RegisterWorker(name WorkerRegisterArgs, workerInfo *Worker
 // ID: worker ID
 // filename: map task name(filename)
 func (c *Coordinator) AssignMapTask(workerID int, reply *AssignMapTaskReply) (err error) {
-	err = nil
-
 	c.workerStatsLock.Lock()
 	workerName := c.workerStats[workerID].name
 	c.workerStatsLock.Unlock()
@@ -88,13 +130,21 @@ func (c *Coordinator) AssignMapTask(workerID int, reply *AssignMapTaskReply) (er
 	c.mapTasksStatsLock.Lock()
 	defer c.mapTasksStatsLock.Unlock()
 
+	// could not assign map tasks to worker %s as all map tasks has been finished
+	if c.isAllMapTasksFinished {
+		reply.ID = -1
+		reply.Name = ""
+		return
+	}
+
 	// go through map tasks state to find a map task that has not been assigned(state: `Pending`)
 	// if found, then set `worker` attribute to the name of worker asking for a map task
 	// and change `status` attribute from `Pending` to `MapExecuting`
 	for ID, state := range c.mapTasksStats {
-		if state.status == Pending {
+		if state.status == Pending || state.status == MapFailed {
 			c.mapTasksStats[ID].status = MapExecuting
 			c.mapTasksStats[ID].worker = workerName
+			c.mapTasksStats[ID].assignTime = time.Now()
 
 			reply.ID = ID
 			reply.Name = c.mapTasks[ID]
@@ -118,32 +168,54 @@ func (c *Coordinator) UpdateMapTaskState(mapTaskID int, updated *bool) error {
 	c.mapTasksStatsLock.Lock()
 	defer c.mapTasksStatsLock.Unlock()
 
-	c.mapTasksStats[mapTaskID].status = MapFinished
-	c.mapTasksStats[mapTaskID].worker = ""
+	if c.mapTasksStats[mapTaskID].status != MapFailed {
+		c.mapTasksStats[mapTaskID].status = MapFinished
+		c.mapTasksStats[mapTaskID].worker = ""
+		*updated = true
+	} else {
+		*updated = false
+	}
 
-	*updated = true
 	return nil
 }
 
 // check if all map tasks has been finished
-func (c *Coordinator) CheckMapTasksFinished(arg int, reply *bool) (err error) {
+func (c *Coordinator) CheckMapTasksFinished(arg int, reply *CheckTaskFinishedReply) (err error) {
 	c.mapTasksStatsLock.Lock()
 	defer c.mapTasksStatsLock.Unlock()
 
 	if c.isAllMapTasksFinished {
-		*reply = true
+		*reply = CheckTaskFinishedReply{
+			AllFinished:   true,
+			AnyTaskFailed: false,
+		}
 		return
 	}
 
 	for _, state := range c.mapTasksStats {
-		if state.status != MapFinished {
-			*reply = false
+		if state.status == Pending || state.status == MapExecuting {
+			*reply = CheckTaskFinishedReply{
+				AllFinished:   false,
+				AnyTaskFailed: false,
+			}
+			return
+		}
+
+		if state.status == MapFailed {
+			*reply = CheckTaskFinishedReply{
+				AllFinished:   false,
+				AnyTaskFailed: true,
+			}
 			return
 		}
 	}
 
+	*reply = CheckTaskFinishedReply{
+		AllFinished:   true,
+		AnyTaskFailed: false,
+	}
+
 	c.isAllMapTasksFinished = true
-	*reply = true
 	return
 }
 
@@ -156,16 +228,24 @@ func (c *Coordinator) AssignReduceTask(workerID int, reduceTaskID *int) error {
 	c.reduceTasksStatsLock.Lock()
 	defer c.reduceTasksStatsLock.Unlock()
 
+	// could not assign reduce tasks to worker as all reduce tasks has been finished
+	if c.isAllReduceTasksFinished {
+		*reduceTaskID = -1
+		return nil
+	}
+
 	for index, state := range c.reduceTasksStats {
-		if state.status == Pending {
+		if state.status == Pending || state.status == ReduceFailed {
 			c.reduceTasksStats[index].worker = workerName
 			c.reduceTasksStats[index].status = ReduceExecuting
+			c.reduceTasksStats[index].assignTime = time.Now()
 
 			*reduceTaskID = index
 			return nil
 		}
 	}
 
+	// could not assign reduce tasks to worker as all reduce tasks has been assigned
 	*reduceTaskID = -1
 	return nil
 }
@@ -179,31 +259,54 @@ func (c *Coordinator) UpdateReduceTaskState(reduceTaskID int, updated *bool) err
 	c.reduceTasksStatsLock.Lock()
 	defer c.reduceTasksStatsLock.Unlock()
 
-	c.reduceTasksStats[reduceTaskID].worker = ""
-	c.reduceTasksStats[reduceTaskID].status = ReduceFinished
+	if c.reduceTasksStats[reduceTaskID].status != ReduceFailed {
+		c.reduceTasksStats[reduceTaskID].worker = ""
+		c.reduceTasksStats[reduceTaskID].status = ReduceFinished
+		*updated = true
+	} else {
+		*updated = false
+	}
 
-	*updated = true
 	return nil
 }
 
-func (c *Coordinator) CheckReduceTasksFinished(arg int, reply *bool) error {
+func (c *Coordinator) CheckReduceTasksFinished(arg int, reply *CheckTaskFinishedReply) (err error) {
 	c.reduceTasksStatsLock.Lock()
 	defer c.reduceTasksStatsLock.Unlock()
 
 	if c.isAllReduceTasksFinished {
-		*reply = true
-		return nil
+		*reply = CheckTaskFinishedReply{
+			AllFinished:   true,
+			AnyTaskFailed: false,
+		}
+		return
 	}
 
 	for _, state := range c.reduceTasksStats {
-		if state.status != ReduceFinished {
-			*reply = false
-			return nil
+		if state.status == Pending || state.status == ReduceExecuting {
+			*reply = CheckTaskFinishedReply{
+				AllFinished:   false,
+				AnyTaskFailed: false,
+			}
+			return
+		}
+
+		if state.status == ReduceFailed {
+			*reply = CheckTaskFinishedReply{
+				AllFinished:   false,
+				AnyTaskFailed: true,
+			}
+			return
 		}
 	}
 
+	*reply = CheckTaskFinishedReply{
+		AllFinished:   true,
+		AnyTaskFailed: false,
+	}
+
 	c.isAllReduceTasksFinished = true
-	return nil
+	return
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -250,6 +353,15 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	for i := 0; i < nReduce; i++ {
 		c.reduceTasksStats[i].status = Pending
 	}
+
+	// setup a thread to continuously check if
+	// any map or reduce tasks has failed(timeout)
+	go func() {
+		for {
+			c.findTimeOutTasks()
+			time.Sleep(time.Second)
+		}
+	}()
 
 	c.server()
 	return &c
