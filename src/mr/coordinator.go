@@ -57,8 +57,8 @@ func (c *Coordinator) findTimeOutTasks() {
 	// first find timeout map tasks
 	c.mapTasksStatsLock.Lock()
 	if !c.isAllMapTasksFinished {
-		for id, state := range c.mapTasksStats {
-			if state.status == MapExecuting && int(time.Since(state.assignTime).Seconds()) >= TimeOut {
+		for id, task := range c.mapTasksStats {
+			if task.status == MapExecuting && int(time.Since(task.assignTime).Seconds()) >= TimeOut {
 				c.mapTasksStats[id].status = MapFailed
 				failedWorkerName := c.mapTasksStats[id].worker
 
@@ -77,8 +77,8 @@ func (c *Coordinator) findTimeOutTasks() {
 	// second find timeout reduce tasks
 	c.reduceTasksStatsLock.Lock()
 	if !c.isAllReduceTasksFinished {
-		for id, state := range c.reduceTasksStats {
-			if state.status == ReduceExecuting && int(time.Since(state.assignTime).Seconds()) >= TimeOut {
+		for id, task := range c.reduceTasksStats {
+			if task.status == ReduceExecuting && int(time.Since(task.assignTime).Seconds()) >= TimeOut {
 				c.reduceTasksStats[id].status = ReduceFailed
 				failedWorkerName := c.reduceTasksStats[id].worker
 
@@ -140,8 +140,8 @@ func (c *Coordinator) AssignMapTask(workerID int, reply *AssignMapTaskReply) (er
 	// go through map tasks state to find a map task that has not been assigned(state: `Pending`)
 	// if found, then set `worker` attribute to the name of worker asking for a map task
 	// and change `status` attribute from `Pending` to `MapExecuting`
-	for ID, state := range c.mapTasksStats {
-		if state.status == Pending || state.status == MapFailed {
+	for ID, task := range c.mapTasksStats {
+		if task.status == Pending || task.status == MapFailed {
 			c.mapTasksStats[ID].status = MapExecuting
 			c.mapTasksStats[ID].worker = workerName
 			c.mapTasksStats[ID].assignTime = time.Now()
@@ -192,8 +192,8 @@ func (c *Coordinator) CheckMapTasksFinished(arg int, reply *CheckTaskFinishedRep
 		return
 	}
 
-	for _, state := range c.mapTasksStats {
-		if state.status == Pending || state.status == MapExecuting {
+	for _, task := range c.mapTasksStats {
+		if task.status == Pending || task.status == MapExecuting {
 			*reply = CheckTaskFinishedReply{
 				AllFinished:   false,
 				AnyTaskFailed: false,
@@ -201,7 +201,7 @@ func (c *Coordinator) CheckMapTasksFinished(arg int, reply *CheckTaskFinishedRep
 			return
 		}
 
-		if state.status == MapFailed {
+		if task.status == MapFailed {
 			*reply = CheckTaskFinishedReply{
 				AllFinished:   false,
 				AnyTaskFailed: true,
@@ -234,8 +234,8 @@ func (c *Coordinator) AssignReduceTask(workerID int, reduceTaskID *int) error {
 		return nil
 	}
 
-	for index, state := range c.reduceTasksStats {
-		if state.status == Pending || state.status == ReduceFailed {
+	for index, task := range c.reduceTasksStats {
+		if task.status == Pending || task.status == ReduceFailed {
 			c.reduceTasksStats[index].worker = workerName
 			c.reduceTasksStats[index].status = ReduceExecuting
 			c.reduceTasksStats[index].assignTime = time.Now()
@@ -282,8 +282,8 @@ func (c *Coordinator) CheckReduceTasksFinished(arg int, reply *CheckTaskFinished
 		return
 	}
 
-	for _, state := range c.reduceTasksStats {
-		if state.status == Pending || state.status == ReduceExecuting {
+	for _, task := range c.reduceTasksStats {
+		if task.status == Pending || task.status == ReduceExecuting {
 			*reply = CheckTaskFinishedReply{
 				AllFinished:   false,
 				AnyTaskFailed: false,
@@ -291,7 +291,7 @@ func (c *Coordinator) CheckReduceTasksFinished(arg int, reply *CheckTaskFinished
 			return
 		}
 
-		if state.status == ReduceFailed {
+		if task.status == ReduceFailed {
 			*reply = CheckTaskFinishedReply{
 				AllFinished:   false,
 				AnyTaskFailed: true,
