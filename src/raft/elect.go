@@ -111,7 +111,7 @@ func (rf *Raft) ticker() {
 			// to begin an election, a follower increments its current term
 			// and transitions to candidate state
 			rf.currentTerm++
-			DebugLog(dElection, rf.me, "Election begin; PEER %d, TERM %d", rf.me, rf.currentTerm)
+			DebugLog(dElection, rf.me, "Election by PEER %d, TERM %d", rf.me, rf.currentTerm)
 
 			// if this peer does not vote for anyone in this term
 			// the peer will first vote for itself
@@ -148,14 +148,14 @@ func (rf *Raft) ticker() {
 				updated := time.Since(rf.tickerStartTime) < rf.electionTimeout
 				if votes > len(rf.peers)/2 && !updated {
 					rf.state = LEADER
-					DebugLog(dStateChange, rf.me, "State changed from CANDIDATE to LEADER")
+					DebugLog(dStateChange, rf.me, "CANDIDATE -> LEADER")
 					go rf.sendHeartBeats()
 				} else {
 					rf.state = FOLLOWER
-					DebugLog(dStateChange, rf.me, "State changed from CANDIDAE to FOLLWER")
+					DebugLog(dStateChange, rf.me, "CANDIDATE -> FOLLOWER")
 				}
 			} else {
-				DebugLog(dElection, rf.me, "Election stopped because this peer has already voted for others")
+				DebugLog(dElection, rf.me, "Has Voted -> %d; Election STOP", rf.vote.CandidateID)
 			}
 		}
 		rf.mu.Unlock()
@@ -205,8 +205,8 @@ func (rf *Raft) sendHeartBeats() {
 				}
 				rf.mu.Unlock()
 
-				rf.issueHeartBeatRPC(peer)
 				DebugLog(dHeartBeart, rf.me, "HEART BEAT -> PEER %d", peer)
+				rf.issueHeartBeatRPC(peer)
 
 				sleepTime := HeartBeatInterval - time.Since(startTime)
 				if sleepTime > 0 {

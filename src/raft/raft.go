@@ -143,14 +143,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) == 0 { // HeartBeat
 		// debugLog(dLock, rf.me, "LOCK; thread: AppendEntries; line: 224")
 		rf.mu.Lock()
-		DebugLog(dHeartBeart, rf.me, "Receive heart beat from leader %d", args.LeaderID)
+		DebugLog(dHeartBeart, rf.me, "Recv HEART BEAT <- %d", args.LeaderID)
 
 		if rf.state == LEADER || rf.state == CANDIDATE {
 			curState := "LEADER"
 			if rf.state == CANDIDATE {
 				curState = "CANDIDATE"
 			}
-			DebugLog(dStateChange, rf.me, "State changed from %s to FOLLOWER", curState)
+			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", curState)
 			rf.state = FOLLOWER
 		}
 
