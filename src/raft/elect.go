@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -157,6 +158,8 @@ func (rf *Raft) ticker() {
 			} else {
 				DebugLog(dElection, rf.me, "Has Voted -> %d; Election STOP", rf.vote.CandidateID)
 			}
+			rf.tickerStartTime = time.Now()
+			rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 		}
 		rf.mu.Unlock()
 	}
