@@ -16,12 +16,17 @@ var debugStart time.Time
 const (
 	dElection    = "ELECT"
 	dStateChange = "STACH"
+	dTermChange  = "TRMCH"
 	dVote        = "VOTE "
 	dHeartBeart  = "HBEAT"
 	dLock        = "LOCK "
 	dTimer       = "TIMER"
 	dWaitGroup   = "WGRUP"
 	dRPC         = "RPCTH"
+	dAppend      = "APPND"
+	dSendEntry   = "SNDEN"
+	dAgree       = "AGREE"
+	dCommit      = "COMIT"
 )
 
 func init() {
@@ -51,4 +56,11 @@ func DebugLog(topic string, peer int, format string, a ...interface{}) (n int, e
 		fmt.Printf(newFmt, a...)
 	}
 	return
+}
+
+func minInt(a int, b int) int {
+	if a <= b {
+		return a
+	}
+	return b
 }
