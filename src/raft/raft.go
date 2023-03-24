@@ -86,6 +86,8 @@ type Raft struct {
 	log         []LogEntry    // log entries
 	nextIndex   []int         // for each server, index of the next log entry to send to that server
 	matchIndex  []int         // for each server, index of highest log entry known to be replicated on server
+
+	agreeThreads int // number of threads trying to reach agreement with followers
 }
 
 // return currentTerm and whether this peer
@@ -174,7 +176,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		newEntry := LogEntry{Term: term, Command: command}
 		rf.log = append(rf.log, newEntry)
 		DebugLog(dAppend, rf.me, "APPEND Entry; I: %d, T: %d", index, term)
+
 		go rf.startAgreement(index)
+		rf.agreeThreads++
 	}
 	return index, term, isLeader
 }

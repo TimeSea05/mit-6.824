@@ -191,13 +191,13 @@ func (rf *Raft) startAgreement(index int) {
 
 	rf.mu.Lock()
 
-	if rf.state == LEADER {
-		// update `commitIndex`
-		if index > rf.commitIndex {
-			rf.commitIndex = index
-			DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
-		}
+	// update `commitIndex`
+	if index > rf.commitIndex {
+		rf.commitIndex = index
+		DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
+	}
 
+	for rf.commitIndex-rf.lastApplied >= rf.agreeThreads {
 		rf.lastApplied++
 		applyMsg := ApplyMsg{
 			CommandValid: true,
@@ -207,8 +207,9 @@ func (rf *Raft) startAgreement(index int) {
 		DebugLog(dCommit, rf.me, "COMMIT Entry; I: %d, T: %d", rf.lastApplied, rf.log[index].Term)
 		rf.applyCh <- applyMsg
 	}
-	rf.mu.Unlock()
+	rf.agreeThreads--
 
+	rf.mu.Unlock()
 	// wait for the log entry to be replicated on all followers
 	cond.Wait()
 	mu.Unlock()
