@@ -35,16 +35,29 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// rf.vote.CandidateID == -1: this peer has not voted for any other candidate
 	// rf.vote.Term < args.Term: a new term begins
 	// and in the new term, this peer has not voted for any other candidate
-	if rf.vote.CandidateID == -1 || rf.vote.Term < args.Term {
+	hasNotVoted := rf.vote.CandidateID == -1 || rf.vote.Term < args.Term
+
+	// Raft determines which of two logs is more up-to-date by comparing the index
+	// and term of the last entries in the logs
+	// To grant vote, the candidate's log must be at least up-to-date as follower's log
+	// if the logs have last entries with different terms, then the log with the later term
+	// is more up-to-date
+	// if the logs end with the same term, then whichever log is longer is more up-to-date
+	moreUpTodate := (args.LastLogTerm > rf.log[len(rf.log)-1].Term) ||
+		(args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1)
+
+	if hasNotVoted && moreUpTodate {
 		rf.vote = Vote{
 			CandidateID: args.CandidateID,
 			Term:        args.Term,
 		}
 		reply.VoteGranted = true
 		DebugLog(dVote, rf.me, "Vote -> PEER %d; TERM: %d", args.CandidateID, args.Term)
-	} else {
+	} else if !hasNotVoted {
 		DebugLog(dVote, rf.me, "Has voted -> PEER %d; No vote", rf.vote.CandidateID)
 		reply.VoteGranted = false
+	} else if !moreUpTodate {
+		DebugLog(dVote, rf.me, "My log Newer than PEER %d's", args.CandidateID)
 	}
 }
 
@@ -63,8 +76,10 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 
 	replyCh := make(chan interface{}, 1)
 	args := RequestVoteArgs{
-		Term:        currentTerm,
-		CandidateID: rf.me,
+		Term:         currentTerm,
+		CandidateID:  rf.me,
+		LastLogIndex: len(rf.log) - 1,
+		LastLogTerm:  rf.log[len(rf.log)-1].Term,
 	}
 	var reply RequestVoteReply
 
@@ -149,6 +164,7 @@ func (rf *Raft) ticker() {
 				updated := time.Since(rf.tickerStartTime) < rf.electionTimeout
 				if votes > len(rf.peers)/2 && !updated {
 					rf.state = LEADER
+					rf.leaderId = rf.me
 					DebugLog(dStateChange, rf.me, "CANDIDATE -> LEADER")
 					go rf.sendHeartBeats()
 				} else {
@@ -158,25 +174,25 @@ func (rf *Raft) ticker() {
 			} else {
 				DebugLog(dElection, rf.me, "Has Voted -> %d; Election STOP", rf.vote.CandidateID)
 			}
-			rf.tickerStartTime = time.Now()
-			rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 		}
+		rf.tickerStartTime = time.Now()
+		rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 		rf.mu.Unlock()
 	}
 }
 
 func (rf *Raft) issueHeartBeatRPC(peer int) {
 	rf.mu.Lock()
-	currentTerm := rf.currentTerm
+	replyCh := make(chan interface{}, 1)
+
+	args := AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderID:     rf.me,
+		LeaderCommit: rf.commitIndex,
+	}
 	rf.mu.Unlock()
 
-	replyCh := make(chan interface{}, 1)
-	args := AppendEntriesArgs{
-		Term:     currentTerm,
-		LeaderID: rf.me,
-	}
 	var reply AppendEntriesReply
-
 	rpcInfo := RPCThreadInfo{
 		peer:  peer,
 		name:  "Raft.AppendEntries",
@@ -187,8 +203,17 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 	rpcFinished := make(chan bool, 1)
 	go rf.RPCTimeoutWrapper(rpcInfo, replyCh)
 	go rf.RPCTimeoutTicker(replyCh, rpcInfo, rpcFinished)
-	<-replyCh
+	hbeatReply := (<-replyCh).(AppendEntriesReply)
 	rpcFinished <- true
+
+	if !hbeatReply.Success && hbeatReply.Term != 0 {
+		rf.mu.Lock()
+		rf.currentTerm = hbeatReply.Term
+		DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
+		rf.state = FOLLOWER
+		DebugLog(dTermChange, rf.me, "LEADER -> FOLLOWER")
+		rf.mu.Unlock()
+	}
 }
 
 func (rf *Raft) sendHeartBeats() {
