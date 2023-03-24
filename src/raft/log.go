@@ -125,7 +125,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 4. append any new entries not already in the log
 	appendEntriesStart := len(rf.log) - args.PrevLogIndex - 1
 	if appendEntriesStart < len(args.Entries) {
-		originLogLen := len(rf.log) - 1
+		originLogLen := len(rf.log)
 		rf.log = append(rf.log, args.Entries[appendEntriesStart:]...)
 
 		entriesStr := "ACCEPT New Entry: "
