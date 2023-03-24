@@ -6,8 +6,10 @@ import "time"
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term        int // candidate's term
-	CandidateID int // candidate requesting vote
+	Term         int // candidate's term
+	CandidateID  int // candidate requesting vote
+	LastLogIndex int // index of candidate's last log entry
+	LastLogTerm  int // term of candidate's last log entry
 }
 
 // example RequestVote RPC reply structure.
@@ -22,6 +24,7 @@ type AppendEntriesArgs struct {
 	Term         int        // leader's term
 	LeaderID     int        // so follower can redirect clients
 	PrevLogIndex int        // index of log entry immediately preceding new ones
+	PrevLogTerm  int        // term of prevLogIndex entry
 	Entries      []LogEntry // log entries to store
 	LeaderCommit int        // leader's commitIndex
 }
@@ -29,7 +32,45 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int  // currentTerm, for leader to update itself
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
+
+	// works when `Success` is false
+	// false -> args.Term < rf.currentterm;
+	// true -> log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+	InConsist bool
 }
+
+// example code to send a RequestVote RPC to a peer.
+// peer is the index of the target peer in rf.peers[].
+// expects RPC arguments in args.
+// fills in *reply with RPC reply, so caller should
+// pass &reply.
+// the types of the args and reply passed to Call() must be
+// the same as the types of the arguments declared in the
+// handler function (including whether they are pointers).
+//
+// The labrpc package simulates a lossy network, in which servers
+// may be unreachable, and in which requests and replies may be lost.
+// Call() sends a request and waits for a reply. If a reply arrives
+// within a timeout interval, Call() returns true; otherwise
+// Call() returns false. Thus Call() may not return for a while.
+// A false return can be caused by a dead peer, a live peer that
+// can't be reached, a lost request, or a lost reply.
+//
+// Call() is guaranteed to return (perhaps after a delay) *except* if the
+// handler function on the peer side does not return.  Thus there
+// is no need to implement your own timeouts around Call().
+//
+// look at the comments in ../labrpc/labrpc.go for more details.
+//
+// if you're having trouble getting RPC to work, check that you've
+// capitalized all field names in structs passed over RPC, and
+// that the caller passes the address of the reply struct with &, not
+// the struct itself.
+
+// func (rf *Raft) sendRequestVote(peer int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+// 	ok := rf.peers[peer].Call("Raft.RequestVote", args, reply)
+// 	return ok
+// }
 
 /*
 	Deal With Network Delays and Failures when Calling RPC
