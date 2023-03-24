@@ -179,6 +179,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 		go rf.startAgreement(index)
 		rf.agreeThreads++
+		DebugLog(dAgree, rf.me, "SET agreeThreads -> %d", rf.agreeThreads)
 	}
 	return index, term, isLeader
 }

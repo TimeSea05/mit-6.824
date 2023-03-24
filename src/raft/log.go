@@ -171,9 +171,12 @@ func (rf *Raft) startAgreement(index int) {
 	// initialized to 1 because the leader already appended this entry to its log
 	replicas := 1
 
-	// `safelyReplicated` represents if the log entry has been safely replicated
-	// which means this log entry has been replicated on a majority of servers
-	safelyReplicated := false
+	// when the leader trying to reach agreement with followers on log entry `index`
+	// became follower, all the threads trying to reach agreement with followers should exit
+	exits := 0
+
+	// whether or not this thread has been awakened once by `reachAgreementPeer` threads
+	awakened := false
 
 	mu.Lock()
 	// issue `AppendEntries` RPCs in parallel to
@@ -182,44 +185,54 @@ func (rf *Raft) startAgreement(index int) {
 		if peer == rf.me {
 			continue
 		}
-		go rf.reachAgreementPeer(peer, index, &mu, cond, &replicas, &safelyReplicated)
+		go rf.reachAgreementPeer(peer, index, &mu, cond, &replicas, &exits, &awakened)
 	}
 
 	// wait for the log entry to be safely replicated
 	cond.Wait()
-	safelyReplicated = true
+	awakened = true
 
 	rf.mu.Lock()
-
-	// update `commitIndex`
-	if index > rf.commitIndex {
-		rf.commitIndex = index
-		DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
-	}
-
-	for rf.commitIndex-rf.lastApplied >= rf.agreeThreads {
-		rf.lastApplied++
-		applyMsg := ApplyMsg{
-			CommandValid: true,
-			CommandIndex: rf.lastApplied,
-			Command:      rf.log[rf.lastApplied].Command,
+	if replicas > len(rf.peers)/2 {
+		// update `commitIndex`
+		if index > rf.commitIndex {
+			rf.commitIndex = index
+			DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 		}
-		DebugLog(dCommit, rf.me, "COMMIT Entry; I: %d, T: %d", rf.lastApplied, rf.log[index].Term)
-		rf.applyCh <- applyMsg
-	}
-	rf.agreeThreads--
 
+		for rf.commitIndex-rf.lastApplied >= rf.agreeThreads {
+			rf.lastApplied++
+			applyMsg := ApplyMsg{
+				CommandValid: true,
+				CommandIndex: rf.lastApplied,
+				Command:      rf.log[rf.lastApplied].Command,
+			}
+			DebugLog(dCommit, rf.me, "COMMIT Entry; I: %d, T: %d", rf.lastApplied, rf.log[index].Term)
+			rf.applyCh <- applyMsg
+		}
+	}
+
+	rf.agreeThreads--
+	DebugLog(dAgree, rf.me, "SET agreeThreads -> %d", rf.agreeThreads)
 	rf.mu.Unlock()
+
 	// wait for the log entry to be replicated on all followers
 	cond.Wait()
 	mu.Unlock()
 }
 
-func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sync.Cond, replicas *int, safelyReplicated *bool) {
+func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sync.Cond, replicas *int, exits *int, awakened *bool) {
 	for {
+		rf.mu.Lock()
+
 		// if this peer is killed, then stop reaching agreement with peer
-		if rf.killed() {
-			return
+		if rf.killed() || rf.state != LEADER {
+			rf.mu.Unlock()
+
+			mu.Lock()
+			*exits++
+			mu.Unlock()
+			break
 		}
 
 		// if a follower disconnects from network, every time the leader received a command
@@ -229,11 +242,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 		// at this time, all the other threads don't need to loop again and again because agreement has
 		// been reached
 		// they just need to log about that infomation and exit loop
-		rf.mu.Lock()
-		if rf.nextIndex[peer] >= len(rf.log) || rf.state != LEADER {
-			if rf.nextIndex[peer] >= len(rf.log) {
-				DebugLog(dAgree, rf.me, "REACH Agreement - PEER %d", peer)
-			}
+		if rf.nextIndex[peer] >= len(rf.log) {
+			DebugLog(dAgree, rf.me, "REACH Agreement - PEER %d", peer)
 			rf.mu.Unlock()
 
 			mu.Lock()
@@ -299,8 +309,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 	}
 
 	mu.Lock()
-	if (!*safelyReplicated && *replicas > len(rf.peers)/2) || // safely replicated
-		(*safelyReplicated && *replicas == len(rf.peers)) { // replicated on all
+	if (!*awakened && *replicas+*exits > len(rf.peers)/2) || // safely replicated or partially exits
+		(*awakened && *replicas+*exits == len(rf.peers)) { // replicated on all	or all exits
 		mu.Unlock()
 		cond.Signal()
 	} else {
