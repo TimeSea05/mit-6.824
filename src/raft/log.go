@@ -90,7 +90,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// Logging about entries received from leader
 	newEntriesStart := args.PrevLogIndex + 1
-	newEntriesString := "Recv New Entry: "
+	newEntriesString := fmt.Sprintf("Recv New Entry(PLI: %d, PLT: %d): ", args.PrevLogIndex, args.PrevLogTerm)
 	for idx, entry := range args.Entries {
 		newEntriesString += fmt.Sprintf("I: %d, T: %d; ", newEntriesStart+idx, entry.Term)
 	}
@@ -129,17 +129,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// 4. append any new entries not already in the log
-	appendEntriesStart := len(rf.log) - args.PrevLogIndex - 1
-	if appendEntriesStart < len(args.Entries) {
-		rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
 
-		// logging about newly appended entries
-		entriesStr := "ACCEPT New Entry: "
-		for idx, entry := range args.Entries {
-			entriesStr += fmt.Sprintf("I: %d, T: %d; ", args.PrevLogIndex+1+idx, entry.Term)
-		}
-		DebugLog(dAppend, rf.me, "%s", entriesStr)
+	// logging about newly appended entries
+	entriesStr := "ACCEPT New Entry: "
+	for idx, entry := range args.Entries {
+		entriesStr += fmt.Sprintf("I: %d, T: %d; ", args.PrevLogIndex+1+idx, entry.Term)
 	}
+	DebugLog(dAppend, rf.me, "%s", entriesStr)
 
 	// 5. if leaderCommit > commitIndex, set commmitIndex =
 	// min(leaderCommit, index of last new entry)
@@ -326,13 +323,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 
 func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 	rf.mu.Lock()
-	// if rf.log is empty before appending the new log entry
-	// then PrevLogIndex should be -1, and PrevLogIndex should be 0
-	var prevLogIndex int
-	var prevLogTerm int
-
-	prevLogIndex = rf.nextIndex[peer] - 1
-	prevLogTerm = rf.log[prevLogIndex].Term
+	prevLogIndex := rf.nextIndex[peer] - 1
+	prevLogTerm := rf.log[prevLogIndex].Term
 
 	args := AppendEntriesArgs{
 		Term:         rf.currentTerm,
@@ -341,6 +333,7 @@ func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 		PrevLogTerm:  prevLogTerm,
 		Entries:      rf.log[prevLogIndex+1:],
 		LeaderCommit: rf.commitIndex,
+		CommitTerm:   rf.log[rf.commitIndex].Term,
 	}
 	rf.mu.Unlock()
 
