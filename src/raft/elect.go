@@ -189,6 +189,7 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
 		LeaderCommit: rf.commitIndex,
+		CommitTerm:   rf.log[rf.commitIndex].Term,
 	}
 	rf.mu.Unlock()
 

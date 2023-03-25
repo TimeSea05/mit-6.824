@@ -44,6 +44,12 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	// leaderCommit > commitIndex, set commmitIndex =
 	// min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
+		if args.LeaderCommit <= len(rf.log)-1 &&
+			rf.log[args.LeaderCommit].Term != args.Term {
+			*reply = AppendEntriesReply{}
+			return
+		}
+
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.log)-1)
 		DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 	}

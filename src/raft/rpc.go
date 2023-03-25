@@ -27,6 +27,7 @@ type AppendEntriesArgs struct {
 	PrevLogTerm  int        // term of prevLogIndex entry
 	Entries      []LogEntry // log entries to store
 	LeaderCommit int        // leader's commitIndex
+	CommitTerm   int        // the term of leader's highest committed entry
 }
 
 type AppendEntriesReply struct {
