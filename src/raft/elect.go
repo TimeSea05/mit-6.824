@@ -16,8 +16,8 @@ const (
 // time constants, in milliseconds
 const (
 	HeartBeatInterval       = 200 * time.Millisecond
-	ElectionTimeoutLeftEnd  = 600
-	ElectionTimeoutInterval = 400
+	ElectionTimeoutLeftEnd  = 500
+	ElectionTimeoutInterval = 750
 )
 
 // example RequestVote RPC handler.
