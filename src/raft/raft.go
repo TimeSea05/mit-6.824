@@ -170,7 +170,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	index := len(rf.log)
 	term := rf.currentTerm
-	isLeader := rf.me == rf.leaderId
+	isLeader := rf.state == LEADER
 
 	if isLeader {
 		newEntry := LogEntry{Term: term, Command: command}
