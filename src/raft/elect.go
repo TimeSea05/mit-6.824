@@ -59,6 +59,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else if !moreUpTodate {
 		DebugLog(dVote, rf.me, "My log Newer than PEER %d's", args.CandidateID)
 	}
+
+	rf.currentTerm = args.Term
 }
 
 // make an RPC call in case of network latency
