@@ -41,12 +41,23 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 
 	/********** Commit Entries Accoring to Leader's `commitIndex` **********/
-	// leaderCommit > commitIndex, set commmitIndex =
-	// min(leaderCommit, index of last new entry)
+	// leaderCommit > commitIndex, set commmitIndex = min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
-		if args.LeaderCommit <= len(rf.log)-1 &&
-			rf.log[args.LeaderCommit].Term != args.Term {
-			*reply = AppendEntriesReply{}
+		// Case 1: args.LeaderCommit <= len(rf.log)-1
+		// After updating the commitIndex of the raft peer, the updated value is args.LeaderCommit.
+		// Afterwards, this raft peer needs to commit all Log entries before args.LeaderCommit.
+		// However, if the term of some of these Log entries is inconsistent with the term of
+		// the Leader raft peer(rf.log[arg.LeaderCommit].Term != args.Term), an error will occur.
+		// Therefore, in this inconsistent situation, the commitIndex of the raft peer cannot be updated.
+
+		// Case 2: args.LeaderCommit > len(rf.log-1)
+		// After updating the commitIndex of the raft peer, the updated value is len(rf.log)-1
+		// But if args.LeaderCommit > rf.commitIndex, which means this raft peer has it's own
+		// uncommitted log entries and these log entries are not from the leader.
+		// If these entries are committed, an error will occur
+		// Therefore, in this inconsistent situation, the commitIndex of the raft peer cannot be updated
+		if (args.LeaderCommit <= len(rf.log)-1 && rf.log[args.LeaderCommit].Term != args.Term) ||
+			args.LeaderCommit > len(rf.log)-1 && rf.commitIndex < len(rf.log)-1 {
 			return
 		}
 
@@ -54,8 +65,8 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 		DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 	}
 
-	// if commitIndex > lastApplied; increment lastApplied
-	// apply log[lastApplied] to state machine
+	// if commitIndex > lastApplied; increment lastApplied to commitIndex
+	// and apply all the log entries before commitIndex
 	for idx := rf.lastApplied + 1; idx <= rf.commitIndex; idx++ {
 		applyMsg := ApplyMsg{
 			CommandValid: true,
