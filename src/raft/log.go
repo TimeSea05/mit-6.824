@@ -19,7 +19,10 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 		}
 		return
 	}
-	DebugLog(dHeartBeart, rf.me, "Recv HEART BEAT <- %d", args.LeaderID)
+	DebugLog(dHeartBeart, rf.me, "Recv HEART BEAT <- %d; {T:%d,PLI:%d,PLT:%d,LC:%d,CT:%d}",
+		args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.CommitTerm)
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,AT:%d}",
+		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.agreeThreads)
 
 	// if current state of this peer is LEADER or CANDIDATE receives heartbeat from another peer
 	// this peer should become follower
@@ -74,7 +77,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 			CommandIndex: idx,
 		}
 		rf.applyCh <- applyMsg
-		DebugLog(dCommit, rf.me, "APPLY Entry: I: %d, T: %d", idx, rf.log[idx].Term)
+		DebugLog(dCommit, rf.me, "APPLY Entry: [I:%d,T:%d]", idx, rf.log[idx].Term)
 		rf.lastApplied++
 	}
 	/***********************************************************************/
@@ -100,12 +103,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 
 	// Logging about entries received from leader
+	DebugLog(dAppend, rf.me, "Recv New Entries <- %d; {T:%d,PLI:%d,PLT:%d,LC:%d,CT:%d}",
+		args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.CommitTerm)
+
 	newEntriesStart := args.PrevLogIndex + 1
-	newEntriesString := fmt.Sprintf("Recv New Entry(PLI: %d, PLT: %d): ", args.PrevLogIndex, args.PrevLogTerm)
+	newEntriesString := "New Entries: ["
 	for idx, entry := range args.Entries {
-		newEntriesString += fmt.Sprintf("I: %d, T: %d; ", newEntriesStart+idx, entry.Term)
+		newEntriesString += fmt.Sprintf("I:%d,T:%d;", newEntriesStart+idx, entry.Term)
 	}
-	DebugLog(dAppend, rf.me, "%s", newEntriesString)
+	DebugLog(dAppend, rf.me, "%s]", newEntriesString)
+
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,AT:%d}",
+		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.agreeThreads)
 
 	// Process log entries from leader
 	// 1. reply false if term < currentTerm
@@ -151,11 +160,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.log = append(rf.log, args.Entries[entriesIndex:]...)
 
 		// logging about newly appended entries
-		entriesStr := "ACCEPT New Entry: "
+		entriesStr := "ACCEPT Entries: ["
 		for idx, entry := range args.Entries[entriesIndex:] {
-			entriesStr += fmt.Sprintf("I: %d, T: %d; ", followerLogIndex+idx, entry.Term)
+			entriesStr += fmt.Sprintf("I:%d,T:%d;", followerLogIndex+idx, entry.Term)
 		}
-		DebugLog(dAppend, rf.me, "%s", entriesStr)
+		DebugLog(dAppend, rf.me, "%s]", entriesStr)
 	}
 
 	// 5. if leaderCommit > commitIndex, set commmitIndex =
@@ -174,7 +183,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			CommandIndex: idx,
 		}
 		rf.applyCh <- applyMsg
-		DebugLog(dCommit, rf.me, "APPLY Entry: I: %d, T: %d", idx, rf.log[idx].Term)
+		DebugLog(dCommit, rf.me, "APPLY Entry: [I:%d,T:%d]", idx, rf.log[idx].Term)
 		rf.lastApplied++
 	}
 
@@ -230,7 +239,7 @@ func (rf *Raft) startAgreement(index int) {
 				CommandIndex: rf.lastApplied,
 				Command:      rf.log[rf.lastApplied].Command,
 			}
-			DebugLog(dCommit, rf.me, "COMMIT Entry; I: %d, T: %d", rf.lastApplied, rf.log[index].Term)
+			DebugLog(dCommit, rf.me, "COMMIT Entry: [I:%d,T:%d]", rf.lastApplied, rf.log[index].Term)
 			rf.applyCh <- applyMsg
 		}
 	}
@@ -277,11 +286,11 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 
 		// log about entries leader gonna send to the raft peer
 		sendEntriesStart := rf.nextIndex[peer]
-		sendEntriesStr := fmt.Sprintf("SEND Entry -> PEER %d; ", peer)
+		sendEntriesStr := fmt.Sprintf("SEND -> PEER %d; [", peer)
 		for idx, entry := range rf.log[sendEntriesStart:] {
-			sendEntriesStr += fmt.Sprintf("I: %d, T: %d; ", sendEntriesStart+idx, entry.Term)
+			sendEntriesStr += fmt.Sprintf("I:%d,T:%d;", sendEntriesStart+idx, entry.Term)
 		}
-		DebugLog(dSendEntry, rf.me, "%s", sendEntriesStr)
+		DebugLog(dSendEntry, rf.me, "%s]", sendEntriesStr)
 		rf.mu.Unlock()
 
 		// Issue AppendEntries RPC to the raft peer
@@ -295,8 +304,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 			rf.mu.Lock()
 			if rf.nextIndex[peer] <= index {
 				rf.nextIndex[peer] = index + 1
-				DebugLog(dSendEntry, rf.me, "SEND Entry -> PEER %d SUCCESS; INC nextIndex[%d] -> %d",
-					peer, peer, rf.nextIndex[peer])
+				DebugLog(dSendEntry, rf.me, "SEND -> PEER %d SUCCESS; nextIndex[%d] -> %d; NI:%v",
+					peer, peer, rf.nextIndex[peer], rf.nextIndex)
 			}
 			rf.mu.Unlock()
 
@@ -314,16 +323,15 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 			rf.mu.Lock()
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
-				DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
 				rf.state = FOLLOWER
-				DebugLog(dStateChange, rf.me, "LEADER -> FOLLOWER")
+				DebugLog(dTermChange, rf.me, "LEADER -> FOLLOWER; TERM -> %d", rf.currentTerm)
 
 				rf.tickerStartTime = time.Now()
 				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 			} else if reply.InConsist {
 				rf.nextIndex[peer]--
-				DebugLog(dSendEntry, rf.me, "SEND Entry -> PEER %d FAIL; DEC nextIndex[%d] -> %d",
-					peer, peer, rf.nextIndex[peer])
+				DebugLog(dSendEntry, rf.me, "SEND -> PEER %d FAIL; nextIndex[%d] -> %d; NI:%v",
+					peer, peer, rf.nextIndex[peer], rf.nextIndex)
 			}
 			rf.mu.Unlock()
 		}

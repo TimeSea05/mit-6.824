@@ -175,7 +175,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if isLeader {
 		newEntry := LogEntry{Term: term, Command: command}
 		rf.log = append(rf.log, newEntry)
-		DebugLog(dAppend, rf.me, "APPEND Entry; I: %d, T: %d", index, term)
+		DebugLog(dAppend, rf.me, "Agree On [I:%d,T:%d]", index, term)
 
 		go rf.startAgreement(index)
 		rf.agreeThreads++

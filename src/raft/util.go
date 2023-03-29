@@ -27,6 +27,7 @@ const (
 	dSendEntry   = "SNDEN"
 	dAgree       = "AGREE"
 	dCommit      = "COMIT"
+	dRaftState   = "RFSTA"
 )
 
 func init() {
