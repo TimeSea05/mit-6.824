@@ -342,10 +342,11 @@ func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 		LeaderID:     rf.me,
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
-		Entries:      rf.log[prevLogIndex+1:],
+		Entries:      make([]LogEntry, len(rf.log)-1-prevLogIndex),
 		LeaderCommit: rf.commitIndex,
 		CommitTerm:   rf.log[rf.commitIndex].Term,
 	}
+	copy(args.Entries, rf.log[prevLogIndex+1:])
 	rf.mu.Unlock()
 
 	var reply AppendEntriesReply
