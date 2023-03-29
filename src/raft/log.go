@@ -134,20 +134,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 3. if an existing entry conflicts with a new one(same index but different terms)
 	// delete the existing entry and all that following it
-	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		rf.log = rf.log[0:args.PrevLogIndex]
-		DebugLog(dAppend, rf.me, "DISCARD All Entries after %d", args.PrevLogIndex)
+	followerLogIndex := args.PrevLogIndex + 1
+	entriesIndex := 0
+	for followerLogIndex < len(rf.log) && entriesIndex < len(args.Entries) {
+		if rf.log[followerLogIndex].Term != args.Entries[entriesIndex].Term {
+			DebugLog(dAppend, rf.me, "DISCARD All Entries after %d", followerLogIndex-1)
+			break
+		}
+		followerLogIndex++
+		entriesIndex++
 	}
 
 	// 4. append any new entries not already in the log
-	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	if entriesIndex < len(args.Entries) {
+		rf.log = rf.log[:followerLogIndex]
+		rf.log = append(rf.log, args.Entries[entriesIndex:]...)
 
-	// logging about newly appended entries
-	entriesStr := "ACCEPT New Entry: "
-	for idx, entry := range args.Entries {
-		entriesStr += fmt.Sprintf("I: %d, T: %d; ", args.PrevLogIndex+1+idx, entry.Term)
+		// logging about newly appended entries
+		entriesStr := "ACCEPT New Entry: "
+		for idx, entry := range args.Entries[entriesIndex:] {
+			entriesStr += fmt.Sprintf("I: %d, T: %d; ", followerLogIndex+idx, entry.Term)
+		}
+		DebugLog(dAppend, rf.me, "%s", entriesStr)
 	}
-	DebugLog(dAppend, rf.me, "%s", entriesStr)
 
 	// 5. if leaderCommit > commitIndex, set commmitIndex =
 	// min(leaderCommit, index of last new entry)
