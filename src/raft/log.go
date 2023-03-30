@@ -35,7 +35,11 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 		rf.state = FOLLOWER
 	}
 
-	rf.currentTerm = args.Term
+	if rf.currentTerm < args.Term {
+		rf.currentTerm = args.Term
+		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
+		rf.persist()
+	}
 	rf.leaderId = args.LeaderID
 
 	// every time a raft peer receives heart beat from leader
@@ -165,6 +169,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			entriesStr += fmt.Sprintf("I:%d,T:%d;", followerLogIndex+idx, entry.Term)
 		}
 		DebugLog(dAppend, rf.me, "%s]", entriesStr)
+
+		rf.persist()
 	}
 
 	// 5. if leaderCommit > commitIndex, set commmitIndex =
@@ -323,6 +329,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 			rf.mu.Lock()
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
+				rf.persist()
+
 				rf.state = FOLLOWER
 				DebugLog(dTermChange, rf.me, "LEADER -> FOLLOWER; TERM -> %d", rf.currentTerm)
 

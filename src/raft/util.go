@@ -28,6 +28,7 @@ const (
 	dAgree       = "AGREE"
 	dCommit      = "COMIT"
 	dRaftState   = "RFSTA"
+	dPersist     = "PERST"
 )
 
 func init() {

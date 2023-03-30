@@ -18,14 +18,16 @@ package raft
 //
 
 import (
-	//	"bytes"
-
+	"bytes"
+	"fmt"
+	"io"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -85,7 +87,7 @@ type Raft struct {
 	applyCh     chan ApplyMsg // tester or service expects Raft to send ApplyMsg messages on
 	log         []LogEntry    // log entries
 	nextIndex   []int         // for each server, index of the next log entry to send to that server
-	matchIndex  []int         // for each server, index of highest log entry known to be replicated on server
+	// matchIndex  []int         // for each server, index of highest log entry known to be replicated on server
 
 	agreeThreads int // number of threads trying to reach agreement with followers
 }
@@ -104,13 +106,24 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	buf := new(bytes.Buffer)
+	encoder := labgob.NewEncoder(buf)
+	encoder.Encode(rf.currentTerm)
+	encoder.Encode(rf.vote)
+	for _, entry := range rf.log {
+		encoder.Encode(entry)
+	}
+
+	data := buf.Bytes()
+	rf.persister.SaveRaftState(data)
+
+	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d};",
+		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term)
+	logStr := "SAVE: Log["
+	for idx, entry := range rf.log {
+		logStr += fmt.Sprintf("I:%d,T:%d;", idx, entry.Term)
+	}
+	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
 
 // restore previously persisted state.
@@ -119,18 +132,43 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	buf := bytes.NewBuffer(data)
+	decoder := labgob.NewDecoder(buf)
+
+	var currentTerm int
+	var vote Vote
+
+	raftLog := make([]LogEntry, 0)
+
+	if err := decoder.Decode(&currentTerm); err != nil {
+		log.Fatalf("Decode field `currentTerm` failed: %v", err)
+	}
+	if err := decoder.Decode(&vote); err != nil {
+		log.Fatalf("Decode field `vote` failed: %v", err)
+	}
+
+	for {
+		var entry LogEntry
+		err := decoder.Decode(&entry)
+		if err == nil {
+			raftLog = append(raftLog, entry)
+		} else if err == io.EOF {
+			break
+		} else {
+			log.Fatalf("Decode field `log` failed: %v", err)
+		}
+	}
+
+	rf.currentTerm = currentTerm
+	rf.vote = vote
+	rf.log = raftLog
+
+	DebugLog(dPersist, rf.me, "LOAD: CT:%d; V:{ID:%d,T:%d};")
+	logStr := "ReadPersist: Log["
+	for idx, entry := range rf.log {
+		logStr += fmt.Sprintf("I:%d,T:%d;", idx, entry.Term)
+	}
+	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -176,6 +214,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		newEntry := LogEntry{Term: term, Command: command}
 		rf.log = append(rf.log, newEntry)
 		DebugLog(dAppend, rf.me, "Agree On [I:%d,T:%d]", index, term)
+		rf.persist()
 
 		go rf.startAgreement(index)
 		rf.agreeThreads++
@@ -214,26 +253,26 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
+	rf := &Raft{
+		peers:     peers,
+		persister: persister,
+		me:        me,
 
-	// Your initialization code here (2A, 2B, 2C).
-	rf.vote = Vote{CandidateID: -1, Term: 0}
-	rf.leaderId = -1
-	rf.tickerStartTime = time.Now()
-	rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
+		// Your initialization code here (2A, 2B, 2C).
+		vote:            Vote{CandidateID: -1, Term: 0},
+		leaderId:        -1,
+		tickerStartTime: time.Now(),
+		electionTimeout: time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval)),
 
-	rf.applyCh = applyCh
-	// first index of log entry should be 1
-	rf.log = append(rf.log, LogEntry{})
+		applyCh:   applyCh,
+		log:       make([]LogEntry, 1),
+		nextIndex: make([]int, len(peers)),
+	}
 
 	// initialize all nextIndex values to the index just
 	// after the last one in its log
-	rf.nextIndex = make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
-		rf.nextIndex[i] = len(rf.log)
+		rf.nextIndex[i] = 1
 	}
 
 	// initialize from state persisted before a crash

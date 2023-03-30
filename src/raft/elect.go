@@ -53,6 +53,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 		reply.VoteGranted = true
 		DebugLog(dVote, rf.me, "Vote -> PEER %d; TERM: %d", args.CandidateID, args.Term)
+		rf.persist()
 	} else if !hasNotVoted {
 		DebugLog(dVote, rf.me, "Has voted -> PEER %d; No vote", rf.vote.CandidateID)
 		reply.VoteGranted = false
@@ -60,7 +61,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		DebugLog(dVote, rf.me, "My log Newer than PEER %d's", args.CandidateID)
 	}
 
-	rf.currentTerm = args.Term
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
+		rf.persist()
+	}
 }
 
 // make an RPC call in case of network latency
@@ -130,6 +135,7 @@ func (rf *Raft) ticker() {
 			// and transitions to candidate state
 			rf.currentTerm++
 			DebugLog(dElection, rf.me, "Election by PEER %d, TERM %d", rf.me, rf.currentTerm)
+			rf.persist()
 
 			// if this peer does not vote for anyone in this term
 			// the peer will first vote for itself
@@ -149,6 +155,7 @@ func (rf *Raft) ticker() {
 							CandidateID: rf.me,
 							Term:        rf.currentTerm,
 						}
+						rf.persist()
 						continue
 					}
 
@@ -213,6 +220,8 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 		rf.mu.Lock()
 		rf.currentTerm = hbeatReply.Term
 		DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
+		rf.persist()
+
 		rf.state = FOLLOWER
 		DebugLog(dTermChange, rf.me, "LEADER -> FOLLOWER")
 		rf.mu.Unlock()
