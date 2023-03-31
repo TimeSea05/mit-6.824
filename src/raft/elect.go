@@ -68,11 +68,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			Term:        args.Term,
 		}
 		reply.VoteGranted = true
+		rf.tickerStartTime = time.Now()
+		rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
+
 		DebugLog(dVote, rf.me, "Vote -> PEER %d; TERM: %d", args.CandidateID, args.Term)
 		rf.persist()
 	} else if !hasNotVoted {
 		DebugLog(dVote, rf.me, "Has voted -> PEER %d; No vote", rf.vote.CandidateID)
-		reply.VoteGranted = false
 	} else if !moreUpTodate {
 		DebugLog(dVote, rf.me, "My log Newer than PEER %d's", args.CandidateID)
 	}
@@ -110,13 +112,27 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 	rpcFinished := make(chan bool, 1)
 	go rf.RPCTimeoutWrapper(rpcInfo, replyCh)
 	go rf.RPCTimeoutTicker(replyCh, rpcInfo, rpcFinished)
-	replyIface := <-replyCh
-	voteReply := replyIface.(RequestVoteReply)
+	voteReply := (<-replyCh).(RequestVoteReply)
 	rpcFinished <- true
 
 	rf.mu.Lock()
 	if voteReply.VoteGranted {
 		*votes++
+	}
+
+	if rf.currentTerm < voteReply.Term {
+		rf.currentTerm = voteReply.Term
+		DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
+		rf.persist()
+
+		if rf.state != FOLLOWER {
+			stateStr := "LEADER"
+			if rf.state == CANDIDATE {
+				stateStr = "CANDIDATE"
+			}
+			rf.state = FOLLOWER
+			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", stateStr)
+		}
 	}
 	wg.Done()
 	rf.mu.Unlock()
@@ -180,8 +196,7 @@ func (rf *Raft) ticker() {
 				// RPCs may delay, so before make this peer a new leader
 				// first check if a leader has already been elected by checking if `rf.tickerTimeStart` and `rf.electionTimeout` has been updated
 				rf.mu.Lock()
-				updated := time.Since(rf.tickerStartTime) < rf.electionTimeout
-				if votes > len(rf.peers)/2 && !updated {
+				if votes > len(rf.peers)/2 && rf.state == CANDIDATE {
 					rf.state = LEADER
 					rf.leaderId = rf.me
 					DebugLog(dStateChange, rf.me, "CANDIDATE -> LEADER")
