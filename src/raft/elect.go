@@ -32,6 +32,22 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
+
+		if rf.state != FOLLOWER {
+			stateStr := "LEADER"
+			if rf.state == CANDIDATE {
+				stateStr = "CANDIDATE"
+			}
+
+			rf.state = FOLLOWER
+			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", stateStr)
+		}
+		rf.persist()
+	}
+
 	// rf.vote.CandidateID == -1: this peer has not voted for any other candidate
 	// rf.vote.Term < args.Term: a new term begins
 	// and in the new term, this peer has not voted for any other candidate
@@ -59,12 +75,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 	} else if !moreUpTodate {
 		DebugLog(dVote, rf.me, "My log Newer than PEER %d's", args.CandidateID)
-	}
-
-	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
-		rf.persist()
 	}
 }
 
