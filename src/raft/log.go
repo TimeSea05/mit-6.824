@@ -238,7 +238,7 @@ func (rf *Raft) startAgreement(index int) {
 			DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 		}
 
-		for rf.commitIndex-rf.lastApplied >= rf.agreeThreads {
+		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			applyMsg := ApplyMsg{
 				CommandValid: true,
@@ -264,7 +264,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 		rf.mu.Lock()
 
 		// if this peer is killed, then stop reaching agreement with peer
-		if rf.killed() || rf.state != LEADER {
+		if rf.killed() || rf.state != LEADER || len(rf.log) > index+1 {
 			rf.mu.Unlock()
 
 			mu.Lock()
