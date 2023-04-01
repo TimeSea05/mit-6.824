@@ -20,7 +20,6 @@ package raft
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"sync"
@@ -107,9 +106,10 @@ func (rf *Raft) persist() {
 	encoder := labgob.NewEncoder(buf)
 	encoder.Encode(rf.currentTerm)
 	encoder.Encode(rf.vote)
-	for _, entry := range rf.log {
-		encoder.Encode(entry)
-	}
+	// for _, entry := range rf.log {
+	// 	encoder.Encode(entry)
+	// }
+	encoder.Encode(rf.log)
 
 	data := buf.Bytes()
 	rf.persister.SaveRaftState(data)
@@ -144,16 +144,19 @@ func (rf *Raft) readPersist(data []byte) {
 		log.Fatalf("Decode field `vote` failed: %v", err)
 	}
 
-	for {
-		var entry LogEntry
-		err := decoder.Decode(&entry)
-		if err == nil {
-			raftLog = append(raftLog, entry)
-		} else if err == io.EOF {
-			break
-		} else {
-			log.Fatalf("Decode field `log` failed: %v", err)
-		}
+	// for {
+	// 	var entry LogEntry
+	// 	err := decoder.Decode(&entry)
+	// 	if err == nil {
+	// 		raftLog = append(raftLog, entry)
+	// 	} else if err == io.EOF {
+	// 		break
+	// 	} else {
+	// 		log.Fatalf("Decode field `log` failed: %v", err)
+	// 	}
+	// }
+	if err := decoder.Decode(&raftLog); err != nil {
+		log.Fatalf("Decode field `log` failed: %v", err)
 	}
 
 	rf.currentTerm = currentTerm
