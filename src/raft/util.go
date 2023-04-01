@@ -9,7 +9,7 @@ import (
 )
 
 // Debugging
-var debug bool
+var debugLevel int
 var debugStart time.Time
 
 // event topics
@@ -39,10 +39,7 @@ func init() {
 		if err != nil {
 			log.Fatal("Invalid verbosity!")
 		}
-
-		if level > 0 {
-			debug = true
-		}
+		debugLevel = level
 	}
 
 	// set debug start time
@@ -50,7 +47,11 @@ func init() {
 }
 
 func DebugLog(topic string, peer int, format string, a ...interface{}) (n int, err error) {
-	if debug {
+	if debugLevel > 0 {
+		if debugLevel < 2 && topic == dPersist {
+			return
+		}
+
 		time := time.Since(debugStart).Milliseconds()
 		prefix := fmt.Sprintf("%6d %s PEER %d: ", time, topic, peer)
 		newFmt := prefix + format + "\n"
