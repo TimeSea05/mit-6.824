@@ -21,8 +21,8 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	}
 	DebugLog(dHeartBeart, rf.me, "Recv HEART BEAT <- %d; {T:%d,PLI:%d,PLT:%d,LC:%d,CT:%d}",
 		args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.CommitTerm)
-	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,AT:%d}",
-		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.agreeThreads)
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v}",
+		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex)
 
 	// if current state of this peer is LEADER or CANDIDATE receives heartbeat from another peer
 	// this peer should become follower
@@ -117,8 +117,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	DebugLog(dAppend, rf.me, "%s]", newEntriesString)
 
-	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,AT:%d}",
-		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.agreeThreads)
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v}",
+		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex)
 
 	// Process log entries from leader
 	// 1. reply false if term < currentTerm
@@ -250,8 +250,6 @@ func (rf *Raft) startAgreement(index int) {
 		}
 	}
 
-	rf.agreeThreads--
-	DebugLog(dAgree, rf.me, "SET agreeThreads -> %d", rf.agreeThreads)
 	rf.mu.Unlock()
 
 	// wait for the log entry to be replicated on all followers

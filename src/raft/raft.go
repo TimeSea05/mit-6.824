@@ -87,9 +87,6 @@ type Raft struct {
 	applyCh     chan ApplyMsg // tester or service expects Raft to send ApplyMsg messages on
 	log         []LogEntry    // log entries
 	nextIndex   []int         // for each server, index of the next log entry to send to that server
-	// matchIndex  []int         // for each server, index of highest log entry known to be replicated on server
-
-	agreeThreads int // number of threads trying to reach agreement with followers
 }
 
 // return currentTerm and whether this peer
@@ -217,8 +214,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.persist()
 
 		go rf.startAgreement(index)
-		rf.agreeThreads++
-		DebugLog(dAgree, rf.me, "SET agreeThreads -> %d", rf.agreeThreads)
 	}
 	return index, term, isLeader
 }
