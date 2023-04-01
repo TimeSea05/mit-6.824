@@ -136,12 +136,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// whose term matches prevLogTerm
 	if args.PrevLogIndex >= len(rf.log) ||
 		rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		xTerm := rf.log[args.PrevLogIndex].Term
+		xIndex := args.PrevLogIndex
+		for rf.log[xIndex-1].Term == xTerm {
+			xIndex--
+		}
+
 		*reply = AppendEntriesReply{
 			Term:      rf.currentTerm,
 			Success:   false,
 			InConsist: true,
+			XTerm:     xTerm,
+			XIndex:    xIndex,
 		}
-		DebugLog(dAppend, rf.me, "REJECT: Log doesn't Match PrevLog")
+
+		DebugLog(dAppend, rf.me, "REJECT: Log doesn't Match PrevLog;{XT:%d;XI:%d}", xTerm, xIndex)
 		return
 	}
 
@@ -335,7 +344,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 				rf.tickerStartTime = time.Now()
 				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 			} else if reply.InConsist {
-				rf.nextIndex[peer]--
+				rf.nextIndex[peer] = reply.XIndex
 				DebugLog(dSendEntry, rf.me, "SEND -> PEER %d FAIL; nextIndex[%d] -> %d; NI:%v",
 					peer, peer, rf.nextIndex[peer], rf.nextIndex)
 			}

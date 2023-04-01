@@ -38,6 +38,10 @@ type AppendEntriesReply struct {
 	// false -> args.Term < rf.currentterm;
 	// true -> log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
 	InConsist bool
+
+	// Optimization
+	XTerm  int // the term of the conflicting entry
+	XIndex int // the first index it stores for that term
 }
 
 // example code to send a RequestVote RPC to a peer.
@@ -83,7 +87,7 @@ type AppendEntriesReply struct {
 	if not, put RPC reply into that channel, else exit
 */
 
-const RPCTimeout = 250 * time.Millisecond
+const RPCTimeout = 400 * time.Millisecond
 
 // All you need to make an RPC call
 // type of args and reply is `interface{}`
