@@ -24,6 +24,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	stateEncoder := labgob.NewEncoder(stateBuf)
 	stateEncoder.Encode(rf.currentTerm)
 	stateEncoder.Encode(rf.vote)
+	stateEncoder.Encode(rf.firstEntryIndex)
+	stateEncoder.Encode(rf.firstEntryTerm)
 	stateEncoder.Encode(rf.log)
 	state := stateBuf.Bytes()
 

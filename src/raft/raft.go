@@ -110,13 +110,15 @@ func (rf *Raft) persist() {
 	encoder := labgob.NewEncoder(buf)
 	encoder.Encode(rf.currentTerm)
 	encoder.Encode(rf.vote)
+	encoder.Encode(rf.firstEntryIndex)
+	encoder.Encode(rf.firstEntryTerm)
 	encoder.Encode(rf.log)
 
 	data := buf.Bytes()
 	rf.persister.SaveRaftState(data)
 
-	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d};",
-		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term)
+	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d}; FEI;%d,FET:%d",
+		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term, rf.firstEntryIndex, rf.firstEntryTerm)
 	logStr := "SAVE: Log["
 	for idx, entry := range rf.log {
 		logStr += fmt.Sprintf("I:%d,T:%d;", idx+rf.firstEntryIndex, entry.Term)
@@ -135,6 +137,8 @@ func (rf *Raft) readPersist(data []byte) {
 
 	var currentTerm int
 	var vote Vote
+	var firstEntryIndex int
+	var firstEntryTerm int
 
 	raftLog := make([]LogEntry, 0)
 
@@ -144,18 +148,28 @@ func (rf *Raft) readPersist(data []byte) {
 	if err := decoder.Decode(&vote); err != nil {
 		log.Fatalf("Decode field `vote` failed: %v", err)
 	}
+	if err := decoder.Decode(&firstEntryIndex); err != nil {
+		log.Fatalf("Decode field `firstEntryIndex` failed: %v", err)
+	}
+	if err := decoder.Decode(&firstEntryTerm); err != nil {
+		log.Fatalf("Decode field `firstEntryTerm` failed: %v", err)
+	}
 	if err := decoder.Decode(&raftLog); err != nil {
 		log.Fatalf("Decode field `log` failed: %v", err)
 	}
 
 	rf.currentTerm = currentTerm
 	rf.vote = vote
+	rf.firstEntryIndex = firstEntryIndex
+	rf.firstEntryTerm = firstEntryTerm
 	rf.log = raftLog
 
-	DebugLog(dPersist, rf.me, "LOAD: CT:%d; V:{ID:%d,T:%d};")
+	DebugLog(dPersist, rf.me, "LOAD: CT:%d; V:{ID:%d,T:%d}; FEI:%d,FET:%d",
+		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term,
+		rf.firstEntryIndex, rf.firstEntryTerm)
 	logStr := "ReadPersist: Log["
 	for idx, entry := range rf.log {
-		logStr += fmt.Sprintf("I:%d,T:%d;", idx, entry.Term)
+		logStr += fmt.Sprintf("I:%d,T:%d;", idx+rf.firstEntryIndex, entry.Term)
 	}
 	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
