@@ -13,19 +13,19 @@ import (
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
 	rf.mu.Lock()
-	DebugLog(dSnapshot, rf.me, "Take Snapshot; Index: %d", index)
+	rf.lastIncludedTerm = rf.log[index-(rf.lastIncludedIdx+1)].Term
+	rf.log = rf.log[index-rf.lastIncludedIdx:]
+	rf.lastIncludedIdx = index
 
-	rf.firstEntryTerm = rf.log[index-rf.firstEntryIndex].Term
-	rf.log = rf.log[index-rf.firstEntryIndex:]
-	rf.firstEntryIndex = index
+	DebugLog(dSnapshot, rf.me, "Take Snapshot; LII:%d,LIT:%d", rf.lastIncludedIdx, rf.lastIncludedTerm)
 	rf.mu.Unlock()
 
 	stateBuf := new(bytes.Buffer)
 	stateEncoder := labgob.NewEncoder(stateBuf)
 	stateEncoder.Encode(rf.currentTerm)
 	stateEncoder.Encode(rf.vote)
-	stateEncoder.Encode(rf.firstEntryIndex)
-	stateEncoder.Encode(rf.firstEntryTerm)
+	stateEncoder.Encode(rf.lastIncludedIdx)
+	stateEncoder.Encode(rf.lastIncludedTerm)
 	stateEncoder.Encode(rf.log)
 	state := stateBuf.Bytes()
 

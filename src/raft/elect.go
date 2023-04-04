@@ -60,7 +60,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// is more up-to-date
 	// if the logs end with the same term, then whichever log is longer is more up-to-date
 	moreUpTodate := (args.LastLogTerm > rf.log[len(rf.log)-1].Term) ||
-		(args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= rf.firstEntryIndex+len(rf.log)-1)
+		(args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= rf.lastIncludedIdx+len(rf.log))
 
 	if hasNotVoted && moreUpTodate {
 		rf.vote = Vote{
@@ -93,7 +93,7 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
-		LastLogIndex: rf.firstEntryIndex + len(rf.log) - 1,
+		LastLogIndex: rf.lastIncludedIdx + len(rf.log),
 		LastLogTerm:  rf.log[len(rf.log)-1].Term,
 	}
 	rf.mu.Unlock()
@@ -217,11 +217,18 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 	rf.mu.Lock()
 	replyCh := make(chan interface{}, 1)
 
+	var commitTerm int
+	if rf.commitIndex == rf.lastIncludedIdx {
+		commitTerm = rf.lastIncludedTerm
+	} else {
+		commitTerm = rf.log[rf.commitIndex-(rf.lastIncludedIdx+1)].Term
+	}
+
 	args := AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
 		LeaderCommit: rf.commitIndex,
-		CommitTerm:   rf.log[rf.commitIndex-rf.firstEntryIndex].Term,
+		CommitTerm:   commitTerm,
 	}
 	rf.mu.Unlock()
 

@@ -21,9 +21,9 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	}
 	DebugLog(dHeartBeart, rf.me, "Recv HEART BEAT <- %d; {T:%d,PLI:%d,PLT:%d,LC:%d,CT:%d}",
 		args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.CommitTerm)
-	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,FEI:%d,FET:%d}",
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,LII:%d,LIT:%d}",
 		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
-		rf.firstEntryIndex, rf.firstEntryTerm)
+		rf.lastIncludedIdx, rf.lastIncludedTerm)
 
 	// if current state of this peer is LEADER or CANDIDATE receives heartbeat from another peer
 	// this peer should become follower
@@ -64,13 +64,13 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 		// uncommitted log entries and these log entries are not from the leader.
 		// If these entries are committed, an error will occur
 		// Therefore, in this inconsistent situation, the commitIndex of the raft peer cannot be updated
-		if (args.LeaderCommit <= rf.firstEntryIndex+len(rf.log)-1 && rf.log[args.LeaderCommit-rf.firstEntryIndex].Term != args.CommitTerm) ||
-			(args.LeaderCommit > rf.firstEntryIndex+len(rf.log)-1 && rf.commitIndex < rf.firstEntryIndex+len(rf.log)-1) {
+		if (args.LeaderCommit <= rf.lastIncludedIdx+len(rf.log) && rf.log[args.LeaderCommit-(rf.lastIncludedIdx+1)].Term != args.CommitTerm) ||
+			(args.LeaderCommit > rf.lastIncludedIdx+len(rf.log) && rf.commitIndex < rf.lastIncludedIdx+len(rf.log)) {
 			rf.mu.Unlock()
 			return
 		}
 
-		rf.commitIndex = minInt(args.LeaderCommit, rf.firstEntryIndex+len(rf.log)-1)
+		rf.commitIndex = minInt(args.LeaderCommit, rf.lastIncludedIdx+len(rf.log))
 		DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 	}
 
@@ -82,7 +82,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	// if commitIndex > lastApplied; increment lastApplied to commitIndex
 	// and apply all the log entries before commitIndex
 	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
-	copy(entriesToApply, rf.log[rf.lastApplied+1-rf.firstEntryIndex:rf.commitIndex+1-rf.firstEntryIndex])
+	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
 	lastApplied := rf.lastApplied
 	rf.lastApplied = rf.commitIndex
 	rf.mu.Unlock()
@@ -125,9 +125,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	DebugLog(dAppend, rf.me, "%s]", newEntriesString)
 
-	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,FEI:%d,FET:%d}",
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,LII:%d,LIT:%d}",
 		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
-		rf.firstEntryIndex, rf.firstEntryTerm)
+		rf.lastIncludedIdx, rf.lastIncludedTerm)
 
 	// Process log entries from leader
 	// 1. reply false if term < currentTerm
@@ -144,16 +144,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 2. reply false if log doesn't contain an entry at prevLogIndex
 	// whose term matches prevLogTerm
-	prevLogIndexOutOfBounds := args.PrevLogIndex-rf.firstEntryIndex >= len(rf.log)
-	prevLogIndexBeforeFirst := args.PrevLogIndex-rf.firstEntryIndex < -1
-	prevLogIndexMismatchSnapshot := args.PrevLogIndex-rf.firstEntryIndex == -1 && rf.firstEntryTerm != args.PrevLogTerm
-	prevLogIndexMismatchLogTerm := args.PrevLogIndex-rf.firstEntryIndex >= 0 && rf.log[args.PrevLogIndex-rf.firstEntryIndex].Term != args.PrevLogTerm
+	prevLogIndexOutOfBounds := args.PrevLogIndex-(rf.lastIncludedIdx+1) >= len(rf.log)
+	prevLogIndexBeforeFirst := args.PrevLogIndex-(rf.lastIncludedIdx+1) < -1
+	prevLogIndexMismatchSnapshot := args.PrevLogIndex == rf.lastIncludedIdx && rf.lastIncludedTerm != args.PrevLogTerm
+	prevLogIndexMismatchLogTerm := args.PrevLogIndex-rf.lastIncludedIdx > 0 && rf.log[args.PrevLogIndex-(rf.lastIncludedIdx+1)].Term != args.PrevLogTerm
 
 	if prevLogIndexOutOfBounds || prevLogIndexBeforeFirst ||
 		prevLogIndexMismatchSnapshot || prevLogIndexMismatchLogTerm {
-		xTerm := rf.log[args.PrevLogIndex-rf.firstEntryIndex].Term
+		xTerm := rf.log[args.PrevLogIndex-(rf.lastIncludedIdx+1)].Term
 		xIndex := args.PrevLogIndex
-		for rf.log[xIndex-rf.firstEntryIndex-1].Term == xTerm && xIndex-rf.firstEntryIndex > 0 {
+		for rf.log[xIndex-(rf.lastIncludedIdx+1)-1].Term == xTerm && xIndex-(rf.lastIncludedIdx+1) > 0 {
 			xIndex--
 		}
 
@@ -172,11 +172,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 3. if an existing entry conflicts with a new one(same index but different terms)
 	// delete the existing entry and all that following it
-	followerLogIndex := args.PrevLogIndex - rf.firstEntryIndex + 1
+	followerLogIndex := args.PrevLogIndex - rf.lastIncludedIdx
 	entriesIndex := 0
 	for followerLogIndex < len(rf.log) && entriesIndex < len(args.Entries) {
 		if rf.log[followerLogIndex].Term != args.Entries[entriesIndex].Term {
-			DebugLog(dAppend, rf.me, "DISCARD All Entries after %d", followerLogIndex+rf.firstEntryIndex-1)
+			DebugLog(dAppend, rf.me, "DISCARD All Entries after %d", followerLogIndex+rf.lastIncludedIdx)
 			break
 		}
 		followerLogIndex++
@@ -191,7 +191,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// logging about newly appended entries
 		entriesStr := "ACCEPT Entries: ["
 		for idx, entry := range args.Entries[entriesIndex:] {
-			entriesStr += fmt.Sprintf("I:%d,T:%d;", followerLogIndex+rf.firstEntryIndex+idx, entry.Term)
+			entriesStr += fmt.Sprintf("I:%d,T:%d;", followerLogIndex+(rf.lastIncludedIdx+1)+idx, entry.Term)
 		}
 		DebugLog(dAppend, rf.me, "%s]", entriesStr)
 
@@ -201,14 +201,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 5. if leaderCommit > commitIndex, set commmitIndex =
 	// min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = minInt(args.LeaderCommit, rf.firstEntryIndex+len(rf.log)-1)
+		rf.commitIndex = minInt(args.LeaderCommit, rf.lastIncludedIdx+len(rf.log))
 		DebugLog(dCommit, rf.me, "SET CommitIndex -> %d", rf.commitIndex)
 	}
 
 	// if commitIndex > lastApplied; increment lastApplied
 	// apply log[lastApplied] to state machine
 	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
-	copy(entriesToApply, rf.log[rf.lastApplied+1-rf.firstEntryIndex:rf.commitIndex+1-rf.firstEntryIndex])
+	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
 	lastApplied := rf.lastApplied
 	rf.lastApplied = rf.commitIndex
 	rf.mu.Unlock()
@@ -272,7 +272,7 @@ func (rf *Raft) startAgreement(index int) {
 		}
 
 		entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
-		copy(entriesToApply, rf.log[rf.lastApplied+1-rf.firstEntryIndex:rf.commitIndex+1-rf.firstEntryIndex])
+		copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
 		lastApplied := rf.lastApplied
 		rf.lastApplied = rf.commitIndex
 		rf.mu.Unlock()
@@ -301,7 +301,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 		rf.mu.Lock()
 
 		// if this peer is killed, then stop reaching agreement with peer
-		if rf.killed() || rf.state != LEADER || index-rf.firstEntryIndex < len(rf.log)-1 {
+		if rf.killed() || rf.state != LEADER || index-rf.lastIncludedIdx < len(rf.log) {
 			rf.mu.Unlock()
 
 			mu.Lock()
@@ -317,7 +317,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 		// at this time, all the other threads don't need to loop again and again because agreement has
 		// been reached
 		// they just need to log about that infomation and exit loop
-		if rf.nextIndex[peer] >= rf.firstEntryIndex+len(rf.log) {
+		if rf.nextIndex[peer] >= (rf.lastIncludedIdx+1)+len(rf.log) {
 			DebugLog(dAgree, rf.me, "REACH Agreement - PEER %d; Line 298", peer)
 			rf.mu.Unlock()
 
@@ -328,10 +328,10 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 		}
 
 		// log about entries leader gonna send to the raft peer
-		sendEntriesStart := rf.nextIndex[peer] - rf.firstEntryIndex
+		sendEntriesStart := rf.nextIndex[peer] - (rf.lastIncludedIdx + 1)
 		sendEntriesStr := fmt.Sprintf("SEND -> PEER %d; [", peer)
 		for idx, entry := range rf.log[sendEntriesStart:] {
-			sendEntriesStr += fmt.Sprintf("I:%d,T:%d;", rf.firstEntryIndex+sendEntriesStart+idx, entry.Term)
+			sendEntriesStr += fmt.Sprintf("I:%d,T:%d;", (rf.lastIncludedIdx+1)+sendEntriesStart+idx, entry.Term)
 		}
 		DebugLog(dSendEntry, rf.me, "%s]", sendEntriesStr)
 		rf.mu.Unlock()
@@ -397,18 +397,30 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 	rf.mu.Lock()
 	prevLogIndex := rf.nextIndex[peer] - 1
-	prevLogTerm := rf.log[prevLogIndex-rf.firstEntryIndex].Term
+	var prevLogTerm int
+	if prevLogIndex == rf.lastIncludedIdx {
+		prevLogTerm = rf.lastIncludedTerm
+	} else {
+		prevLogTerm = rf.log[prevLogIndex-(rf.lastIncludedIdx+1)].Term
+	}
+
+	var commitTerm int
+	if rf.commitIndex == rf.lastIncludedIdx {
+		commitTerm = rf.lastIncludedTerm
+	} else {
+		commitTerm = rf.log[rf.commitIndex-(rf.lastIncludedIdx+1)].Term
+	}
 
 	args := AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
-		Entries:      make([]LogEntry, len(rf.log)-1-prevLogIndex+rf.firstEntryIndex),
+		Entries:      make([]LogEntry, len(rf.log)-prevLogIndex+rf.lastIncludedIdx),
 		LeaderCommit: rf.commitIndex,
-		CommitTerm:   rf.log[rf.commitIndex-rf.firstEntryIndex].Term,
+		CommitTerm:   commitTerm,
 	}
-	copy(args.Entries, rf.log[prevLogIndex+1-rf.firstEntryIndex:])
+	copy(args.Entries, rf.log[prevLogIndex-rf.lastIncludedIdx:])
 	rf.mu.Unlock()
 
 	var reply AppendEntriesReply

@@ -88,8 +88,8 @@ type Raft struct {
 	nextIndex   []int         // for each server, index of the next log entry to send to that server
 	commitMu    sync.Mutex
 
-	firstEntryIndex int // the index of first entry in the log
-	firstEntryTerm  int // the term of the first entry in the log
+	lastIncludedIdx  int // the index of the last entry in the log that the snapshot replaces
+	lastIncludedTerm int // the term of that last entry
 }
 
 // return currentTerm and whether this peer
@@ -110,18 +110,18 @@ func (rf *Raft) persist() {
 	encoder := labgob.NewEncoder(buf)
 	encoder.Encode(rf.currentTerm)
 	encoder.Encode(rf.vote)
-	encoder.Encode(rf.firstEntryIndex)
-	encoder.Encode(rf.firstEntryTerm)
+	encoder.Encode(rf.lastIncludedIdx)
+	encoder.Encode(rf.lastIncludedTerm)
 	encoder.Encode(rf.log)
 
 	data := buf.Bytes()
 	rf.persister.SaveRaftState(data)
 
-	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d}; FEI;%d,FET:%d",
-		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term, rf.firstEntryIndex, rf.firstEntryTerm)
+	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d}; LII;%d,LIT:%d",
+		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term, rf.lastIncludedIdx, rf.lastIncludedTerm)
 	logStr := "SAVE: Log["
 	for idx, entry := range rf.log {
-		logStr += fmt.Sprintf("I:%d,T:%d;", idx+rf.firstEntryIndex, entry.Term)
+		logStr += fmt.Sprintf("I:%d,T:%d;", idx+(rf.lastIncludedIdx+1), entry.Term)
 	}
 	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
@@ -137,8 +137,8 @@ func (rf *Raft) readPersist(data []byte) {
 
 	var currentTerm int
 	var vote Vote
-	var firstEntryIndex int
-	var firstEntryTerm int
+	var lastIncludedIdx int
+	var lastIncludedTerm int
 
 	raftLog := make([]LogEntry, 0)
 
@@ -148,10 +148,10 @@ func (rf *Raft) readPersist(data []byte) {
 	if err := decoder.Decode(&vote); err != nil {
 		log.Fatalf("Decode field `vote` failed: %v", err)
 	}
-	if err := decoder.Decode(&firstEntryIndex); err != nil {
-		log.Fatalf("Decode field `firstEntryIndex` failed: %v", err)
+	if err := decoder.Decode(&lastIncludedIdx); err != nil {
+		log.Fatalf("Decode field `lastIncludedIdx` failed: %v", err)
 	}
-	if err := decoder.Decode(&firstEntryTerm); err != nil {
+	if err := decoder.Decode(&lastIncludedTerm); err != nil {
 		log.Fatalf("Decode field `firstEntryTerm` failed: %v", err)
 	}
 	if err := decoder.Decode(&raftLog); err != nil {
@@ -160,16 +160,16 @@ func (rf *Raft) readPersist(data []byte) {
 
 	rf.currentTerm = currentTerm
 	rf.vote = vote
-	rf.firstEntryIndex = firstEntryIndex
-	rf.firstEntryTerm = firstEntryTerm
+	rf.lastIncludedIdx = lastIncludedIdx
+	rf.lastIncludedTerm = lastIncludedTerm
 	rf.log = raftLog
 
-	DebugLog(dPersist, rf.me, "LOAD: CT:%d; V:{ID:%d,T:%d}; FEI:%d,FET:%d",
+	DebugLog(dPersist, rf.me, "LOAD: CT:%d; V:{ID:%d,T:%d}; LII:%d,LIT:%d",
 		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term,
-		rf.firstEntryIndex, rf.firstEntryTerm)
+		rf.lastIncludedIdx, rf.lastIncludedTerm)
 	logStr := "ReadPersist: Log["
 	for idx, entry := range rf.log {
-		logStr += fmt.Sprintf("I:%d,T:%d;", idx+rf.firstEntryIndex, entry.Term)
+		logStr += fmt.Sprintf("I:%d,T:%d;", idx+(rf.lastIncludedIdx+1), entry.Term)
 	}
 	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
@@ -191,7 +191,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := len(rf.log) + rf.firstEntryIndex
+	index := len(rf.log) + (rf.lastIncludedIdx + 1)
 	term := rf.currentTerm
 	isLeader := rf.state == LEADER
 
@@ -199,9 +199,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		newEntry := LogEntry{Term: term, Command: command}
 		rf.log = append(rf.log, newEntry)
 		DebugLog(dAppend, rf.me, "Agree On [I:%d,T:%d]", index, term)
-		DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,FEI:%d,FET:%d}",
+		DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,LII:%d,LIT:%d}",
 			rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
-			rf.firstEntryIndex, rf.firstEntryTerm)
+			rf.lastIncludedIdx, rf.lastIncludedTerm)
 		rf.persist()
 
 		go rf.startAgreement(index)
@@ -260,6 +260,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	for i := 0; i < len(rf.peers); i++ {
 		rf.nextIndex[i] = 1
 	}
+	rf.lastIncludedIdx = -1
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
