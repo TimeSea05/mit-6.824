@@ -60,7 +60,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// is more up-to-date
 	// if the logs end with the same term, then whichever log is longer is more up-to-date
 	moreUpTodate := (args.LastLogTerm > rf.log[len(rf.log)-1].Term) ||
-		(args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1)
+		(args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= rf.firstEntryIndex+len(rf.log)-1)
 
 	if hasNotVoted && moreUpTodate {
 		rf.vote = Vote{
@@ -90,18 +90,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // send a value to `rpcFinished` to tell the ticker do not send a empty value to `replyCh`
 func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 	rf.mu.Lock()
-	currentTerm := rf.currentTerm
-	rf.mu.Unlock()
-
-	replyCh := make(chan interface{}, 1)
 	args := RequestVoteArgs{
-		Term:         currentTerm,
+		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
-		LastLogIndex: len(rf.log) - 1,
+		LastLogIndex: rf.firstEntryIndex + len(rf.log) - 1,
 		LastLogTerm:  rf.log[len(rf.log)-1].Term,
 	}
-	var reply RequestVoteReply
+	rf.mu.Unlock()
 
+	var reply RequestVoteReply
+	replyCh := make(chan interface{}, 1)
 	rpcInfo := RPCThreadInfo{
 		peer:  peer,
 		name:  "Raft.RequestVote",
@@ -223,7 +221,7 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
 		LeaderCommit: rf.commitIndex,
-		CommitTerm:   rf.log[rf.commitIndex].Term,
+		CommitTerm:   rf.log[rf.commitIndex-rf.firstEntryIndex].Term,
 	}
 	rf.mu.Unlock()
 

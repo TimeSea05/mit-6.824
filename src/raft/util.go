@@ -29,6 +29,7 @@ const (
 	dCommit      = "COMIT"
 	dRaftState   = "RFSTA"
 	dPersist     = "PERST"
+	dSnapshot    = "SSHOT"
 )
 
 func init() {

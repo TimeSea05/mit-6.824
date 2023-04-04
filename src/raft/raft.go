@@ -86,6 +86,10 @@ type Raft struct {
 	applyCh     chan ApplyMsg // tester or service expects Raft to send ApplyMsg messages on
 	log         []LogEntry    // log entries
 	nextIndex   []int         // for each server, index of the next log entry to send to that server
+	commitMu    sync.Mutex
+
+	firstEntryIndex int // the index of first entry in the log
+	firstEntryTerm  int // the term of the first entry in the log
 }
 
 // return currentTerm and whether this peer
@@ -115,7 +119,7 @@ func (rf *Raft) persist() {
 		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term)
 	logStr := "SAVE: Log["
 	for idx, entry := range rf.log {
-		logStr += fmt.Sprintf("I:%d,T:%d;", idx, entry.Term)
+		logStr += fmt.Sprintf("I:%d,T:%d;", idx+rf.firstEntryIndex, entry.Term)
 	}
 	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
@@ -156,24 +160,6 @@ func (rf *Raft) readPersist(data []byte) {
 	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
 
-// A service wants to switch to snapshot.  Only do so if Raft hasn't
-// have more recent info since it communicate the snapshot on applyCh.
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
-	// Your code here (2D).
-
-	return true
-}
-
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
-
-}
-
 // the service using Raft (e.g. a k/v peer) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // peer isn't the leader, returns false. otherwise start the
@@ -191,7 +177,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := len(rf.log)
+	index := len(rf.log) + rf.firstEntryIndex
 	term := rf.currentTerm
 	isLeader := rf.state == LEADER
 
@@ -199,6 +185,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		newEntry := LogEntry{Term: term, Command: command}
 		rf.log = append(rf.log, newEntry)
 		DebugLog(dAppend, rf.me, "Agree On [I:%d,T:%d]", index, term)
+		DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,FEI:%d,FET:%d}",
+			rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
+			rf.firstEntryIndex, rf.firstEntryTerm)
 		rf.persist()
 
 		go rf.startAgreement(index)
