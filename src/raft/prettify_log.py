@@ -17,7 +17,9 @@ Topics = {
   'AGREE': '#ff9933',
   'SNDEN': 'blue',
   'COMIT': 'white',
-  'PERST': '#d92525'
+  'PERST': '#d92525',
+  'SSHOT': '#00bfae',
+  'LOCK ': 'red'
 }
 
 log = sys.stdin
@@ -26,7 +28,7 @@ if (len(sys.argv) > 1):
 
 console = Console()
 consoleWidth = console.size.width
-ncolumns = 5
+ncolumns = 3
 
 for line in log:
   try:
