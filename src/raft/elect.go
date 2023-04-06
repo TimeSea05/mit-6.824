@@ -37,13 +37,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
 
 		if rf.state != FOLLOWER {
-			stateStr := "LEADER"
-			if rf.state == CANDIDATE {
-				stateStr = "CANDIDATE"
-			}
-
 			rf.state = FOLLOWER
-			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", stateStr)
+			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
 		}
 		rf.persist()
 	}
@@ -124,12 +119,8 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 		rf.persist()
 
 		if rf.state != FOLLOWER {
-			stateStr := "LEADER"
-			if rf.state == CANDIDATE {
-				stateStr = "CANDIDATE"
-			}
 			rf.state = FOLLOWER
-			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", stateStr)
+			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
 		}
 	}
 	wg.Done()

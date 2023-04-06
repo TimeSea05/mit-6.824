@@ -7,6 +7,32 @@ import (
 	"time"
 )
 
+// The function commits log entries and sends them to the apply channel.
+// All log entries from `rf.lastApplied+1` to `rf.commitIndex`(updated by other functions)
+// will be commmited
+// When you call this function, make sure that you already hold `rf.mu`,
+// or data race will be detected
+func (rf *Raft) commitEntries() {
+	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
+	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
+	lastApplied := rf.lastApplied
+	rf.lastApplied = rf.commitIndex
+	rf.mu.Unlock()
+
+	rf.commitMu.Lock()
+	for _, entry := range entriesToApply {
+		lastApplied++
+		applyMsg := ApplyMsg{
+			CommandValid: true,
+			CommandIndex: lastApplied,
+			Command:      entry.Command,
+		}
+		DebugLog(dCommit, rf.me, "COMMIT Entry: [I:%d,T:%d]", lastApplied, entry.Term)
+		rf.applyCh <- applyMsg
+	}
+	rf.commitMu.Unlock()
+}
+
 func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 
@@ -27,12 +53,8 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 
 	// if current state of this peer is LEADER or CANDIDATE receives heartbeat from another peer
 	// this peer should become follower
-	if rf.state == LEADER || rf.state == CANDIDATE {
-		curState := "LEADER"
-		if rf.state == CANDIDATE {
-			curState = "CANDIDATE"
-		}
-		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", curState)
+	if rf.state != FOLLOWER {
+		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
 		rf.state = FOLLOWER
 	}
 
@@ -48,7 +70,6 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	rf.tickerStartTime = time.Now()
 	rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 
-	/********** Commit Entries Accoring to Leader's `commitIndex` **********/
 	// leaderCommit > commitIndex, set commmitIndex = min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
 		// Case 1: args.LeaderCommit <= len(rf.log)-1
@@ -81,25 +102,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 
 	// if commitIndex > lastApplied; increment lastApplied to commitIndex
 	// and apply all the log entries before commitIndex
-	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
-	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
-	lastApplied := rf.lastApplied
-	rf.lastApplied = rf.commitIndex
-	rf.mu.Unlock()
-
-	rf.commitMu.Lock()
-	for _, entry := range entriesToApply {
-		lastApplied++
-		applyMsg := ApplyMsg{
-			CommandValid: true,
-			CommandIndex: lastApplied,
-			Command:      entry.Command,
-		}
-		DebugLog(dCommit, rf.me, "APPLY Entry: [I:%d,T:%d]", lastApplied, entry.Term)
-		rf.applyCh <- applyMsg
-	}
-	rf.commitMu.Unlock()
-	/***********************************************************************/
+	rf.commitEntries()
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -207,24 +210,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// if commitIndex > lastApplied; increment lastApplied
 	// apply log[lastApplied] to state machine
-	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
-	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
-	lastApplied := rf.lastApplied
-	rf.lastApplied = rf.commitIndex
-	rf.mu.Unlock()
-
-	rf.commitMu.Lock()
-	for _, entry := range entriesToApply {
-		lastApplied++
-		applyMsg := ApplyMsg{
-			CommandValid: true,
-			CommandIndex: lastApplied,
-			Command:      entry.Command,
-		}
-		DebugLog(dCommit, rf.me, "APPLY Entry: [I:%d,T:%d]", lastApplied, entry.Term)
-		rf.applyCh <- applyMsg
-	}
-	rf.commitMu.Unlock()
+	rf.commitEntries()
 
 	*reply = AppendEntriesReply{
 		Term:    rf.currentTerm,
@@ -271,24 +257,7 @@ func (rf *Raft) startAgreement(index int) {
 			DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 		}
 
-		entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
-		copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
-		lastApplied := rf.lastApplied
-		rf.lastApplied = rf.commitIndex
-		rf.mu.Unlock()
-
-		rf.commitMu.Lock()
-		for _, entry := range entriesToApply {
-			lastApplied++
-			applyMsg := ApplyMsg{
-				CommandValid: true,
-				CommandIndex: lastApplied,
-				Command:      entry.Command,
-			}
-			DebugLog(dCommit, rf.me, "COMMIT Entry: [I:%d,T:%d]", lastApplied, entry.Term)
-			rf.applyCh <- applyMsg
-		}
-		rf.commitMu.Unlock()
+		rf.commitEntries()
 	}
 
 	// wait for the log entry to be replicated on all followers
@@ -306,23 +275,6 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 
 			mu.Lock()
 			*exits++
-			mu.Unlock()
-			break
-		}
-
-		// if a follower disconnects from network, every time the leader received a command
-		// the leader will start a thread to reach agreement with the disconnected follower
-		// if one thread reach agreement with the rejoined follower successfully, then it will set
-		// rf.nextIndex[peer] to len(rf.log)
-		// at this time, all the other threads don't need to loop again and again because agreement has
-		// been reached
-		// they just need to log about that infomation and exit loop
-		if rf.nextIndex[peer] >= (rf.lastIncludedIdx+1)+len(rf.log) {
-			DebugLog(dAgree, rf.me, "REACH Agreement - PEER %d; Line 298", peer)
-			rf.mu.Unlock()
-
-			mu.Lock()
-			*replicas++
 			mu.Unlock()
 			break
 		}
@@ -369,7 +321,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 				rf.persist()
 
 				rf.state = FOLLOWER
-				DebugLog(dTermChange, rf.me, "LEADER -> FOLLOWER; TERM -> %d", rf.currentTerm)
+				DebugLog(dTermChange, rf.me, "%s -> FOLLOWER; TERM -> %d", rf.stateStr(), rf.currentTerm)
 
 				rf.tickerStartTime = time.Now()
 				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
