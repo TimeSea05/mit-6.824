@@ -54,8 +54,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// if the logs have last entries with different terms, then the log with the later term
 	// is more up-to-date
 	// if the logs end with the same term, then whichever log is longer is more up-to-date
-	moreUpTodate := (args.LastLogTerm > rf.log[len(rf.log)-1].Term) ||
-		(args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= rf.lastIncludedIdx+len(rf.log))
+	var lastLogTerm int
+	if len(rf.log) == 0 {
+		lastLogTerm = rf.lastIncludedTerm
+	} else {
+		lastLogTerm = rf.log[len(rf.log)-1].Term
+	}
+	moreUpTodate := (args.LastLogTerm > lastLogTerm) ||
+		(args.LastLogTerm == lastLogTerm && args.LastLogIndex >= rf.lastIncludedIdx+len(rf.log))
 
 	if hasNotVoted && moreUpTodate {
 		rf.vote = Vote{
@@ -85,11 +91,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // send a value to `rpcFinished` to tell the ticker do not send a empty value to `replyCh`
 func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 	rf.mu.Lock()
+	var lastLogTerm int
+	if len(rf.log) == 0 {
+		lastLogTerm = rf.lastIncludedTerm
+	} else {
+		lastLogTerm = rf.log[len(rf.log)-1].Term
+	}
+
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
 		LastLogIndex: rf.lastIncludedIdx + len(rf.log),
-		LastLogTerm:  rf.log[len(rf.log)-1].Term,
+		LastLogTerm:  lastLogTerm,
 	}
 	rf.mu.Unlock()
 
@@ -244,7 +257,7 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 		rf.persist()
 
 		rf.state = FOLLOWER
-		DebugLog(dTermChange, rf.me, "LEADER -> FOLLOWER")
+		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
 		rf.mu.Unlock()
 	}
 }
