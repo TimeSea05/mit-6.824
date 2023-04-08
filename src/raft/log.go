@@ -336,12 +336,13 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 			}
 		} else {
 			replyTerm := rf.issueInstallSnapshotRPC(peer)
+			if replyTerm == 0 {
+				continue
+			}
 
 			rf.mu.Lock()
-			if replyTerm == -1 {
-				continue
-			} else if replyTerm > rf.currentTerm {
-				DebugLog(dSnapshot, rf.me, "SEND Snapshot -> PEER %d FAIL", peer)
+			if replyTerm > rf.currentTerm {
+				DebugLog(dSnapshot, rf.me, "INSTALL Snapshot -> PEER %d FAIL", peer)
 				rf.currentTerm = replyTerm
 				DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
 				rf.persist()
@@ -352,7 +353,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 			} else {
 				rf.nextIndex[peer] = rf.lastIncludedIdx + 1
-				DebugLog(dSnapshot, rf.me, "SEND Snapshot SUCCESS; nextIndex[%d] -> %d", peer, rf.nextIndex[peer])
+				DebugLog(dSnapshot, rf.me, "INSTALL Snapshot SUCCESS; nextIndex[%d] -> %d", peer, rf.nextIndex[peer])
 			}
 			rf.mu.Unlock()
 		}
