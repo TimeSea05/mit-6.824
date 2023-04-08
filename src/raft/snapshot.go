@@ -1,9 +1,8 @@
 package raft
 
 import (
-	"bytes"
-
-	"6.824/labgob"
+	"math/rand"
+	"time"
 )
 
 // the service says it has created a snapshot that has
@@ -26,8 +25,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.commitMu.Lock()
-	defer rf.commitMu.Unlock()
 
 	*replyTerm = rf.currentTerm
 	// Reply immediately if term < currentTerm
@@ -35,20 +32,29 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 		return
 	}
 
+	if rf.state != FOLLOWER {
+		rf.state = FOLLOWER
+		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+		rf.tickerStartTime = time.Now()
+		rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
+	}
+
 	// If existing log entry has same index and term as snapshot's
 	// last included entry, retain log entries following it and reply
 	// Else, discard the entire log
 	if rf.lastIncludedIdx+len(rf.log) > args.LastIncludedIndex {
-		rf.log = rf.log[args.LastIncludedIndex-rf.lastIncludedIdx:]
-		DebugLog(dSnapshot, rf.me, "DISCARD all entries before %d", args.LastIncludedIndex)
+		if rf.lastIncludedIdx < args.LastIncludedIndex {
+			rf.log = rf.log[args.LastIncludedIndex-rf.lastIncludedIdx:]
+			DebugLog(dSnapshot, rf.me, "DISCARD all entries before %d", args.LastIncludedIndex)
+		}
 	} else {
 		rf.log = nil
 		DebugLog(dSnapshot, rf.me, "DISCARD the whole log")
 	}
 
 	// Reset state machine using snapshot contents
-	rf.lastIncludedIdx = args.LastIncludedIndex
-	rf.lastIncludedTerm = args.LastIncludedTerm
+	rf.lastIncludedIdx = maxInt(rf.lastIncludedIdx, args.LastIncludedIndex)
+	rf.lastIncludedTerm = maxInt(rf.lastIncludedTerm, args.LastIncludedTerm)
 	rf.currentTerm = args.Term
 
 	rf.commitIndex = maxInt(rf.commitIndex, args.LastIncludedIndex)
@@ -56,15 +62,19 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 	DebugLog(dRaftState, rf.me, "LII:%d,LIT:%d,CT:%d,CI:%d,LA:%d",
 		rf.lastIncludedIdx, rf.lastIncludedTerm, rf.currentTerm,
 		rf.commitIndex, rf.lastApplied)
+	rf.persister.SaveStateAndSnapshot(rf.encodeState(), args.Data)
 
-	applyMsg := ApplyMsg{
-		CommandValid:  false,
-		SnapshotValid: true,
-		Snapshot:      args.Data,
-		SnapshotIndex: args.LastIncludedIndex,
-		SnapshotTerm:  args.Term,
+	if args.LastIncludedIndex >= rf.commitIndex {
+		DebugLog(dSnapshot, rf.me, "APPLY Snapshot")
+		applyMsg := ApplyMsg{
+			CommandValid:  false,
+			SnapshotValid: true,
+			Snapshot:      args.Data,
+			SnapshotIndex: args.LastIncludedIndex,
+			SnapshotTerm:  args.Term,
+		}
+		rf.applyCh <- applyMsg
 	}
-	rf.applyCh <- applyMsg
 }
 
 // Make sure that every time you call this function
@@ -78,6 +88,13 @@ func (rf *Raft) issueInstallSnapshotRPC(peer int) int {
 		Data:              rf.persister.ReadSnapshot(),
 	}
 	rf.mu.Unlock()
+
+	snapshotStr := "non-nil"
+	if args.Data == nil {
+		snapshotStr = "nil"
+	}
+	DebugLog(dSnapshot, rf.me, "INSTALL Snapshot -> PEER %d; {T:%d,LLI:%d,LIT:%d,DATA:%s}",
+		peer, args.Term, args.LastIncludedIndex, args.LastIncludedTerm, snapshotStr)
 
 	var reply int
 	replyCh := make(chan interface{}, 1)

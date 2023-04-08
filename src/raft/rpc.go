@@ -152,7 +152,7 @@ func (rf *Raft) RPCTimeoutTicker(replyCh chan interface{}, info RPCThreadInfo, r
 		case AppendEntriesReply:
 			replyCh <- AppendEntriesReply{}
 		case int:
-			replyCh <- -1
+			replyCh <- 0
 		}
 	}
 }
