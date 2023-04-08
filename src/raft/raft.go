@@ -106,16 +106,7 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	buf := new(bytes.Buffer)
-	encoder := labgob.NewEncoder(buf)
-	encoder.Encode(rf.currentTerm)
-	encoder.Encode(rf.vote)
-	encoder.Encode(rf.lastIncludedIdx)
-	encoder.Encode(rf.lastIncludedTerm)
-	encoder.Encode(rf.log)
-
-	data := buf.Bytes()
-	rf.persister.SaveRaftState(data)
+	rf.persister.SaveRaftState(rf.encodeState())
 
 	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d}; LII;%d,LIT:%d",
 		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term, rf.lastIncludedIdx, rf.lastIncludedTerm)

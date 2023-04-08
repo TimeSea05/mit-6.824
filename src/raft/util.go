@@ -1,11 +1,14 @@
 package raft
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"time"
+
+	"6.824/labgob"
 )
 
 // Debugging
@@ -91,4 +94,19 @@ func (rf *Raft) stateStr() string {
 
 	log.Fatalf("Invalid raft state: %d", rf.state)
 	return ""
+}
+
+// Return encoded raft state: [currentTerm, vote, lastIncludedIdx, lastIncludedTerm, log]
+// When you call this function, make sure you already hold `rf.mu`
+// or data race will be detected
+func (rf *Raft) encodeState() []byte {
+	buf := new(bytes.Buffer)
+	encoder := labgob.NewEncoder(buf)
+	encoder.Encode(rf.currentTerm)
+	encoder.Encode(rf.vote)
+	encoder.Encode(rf.lastIncludedIdx)
+	encoder.Encode(rf.lastIncludedTerm)
+	encoder.Encode(rf.log)
+
+	return buf.Bytes()
 }

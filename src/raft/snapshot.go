@@ -20,16 +20,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.lastIncludedIdx = index
 	DebugLog(dSnapshot, rf.me, "Take Snapshot; LL:%d,LII:%d,LIT:%d", len(rf.log), rf.lastIncludedIdx, rf.lastIncludedTerm)
 
-	stateBuf := new(bytes.Buffer)
-	stateEncoder := labgob.NewEncoder(stateBuf)
-	stateEncoder.Encode(rf.currentTerm)
-	stateEncoder.Encode(rf.vote)
-	stateEncoder.Encode(rf.lastIncludedIdx)
-	stateEncoder.Encode(rf.lastIncludedTerm)
-	stateEncoder.Encode(rf.log)
-	state := stateBuf.Bytes()
-
-	rf.persister.SaveStateAndSnapshot(state, snapshot)
+	rf.persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
