@@ -44,6 +44,14 @@ type AppendEntriesReply struct {
 	XIndex int // the first index it stores for that term
 }
 
+type InstallSnapshotArgs struct {
+	Term              int    // leader's term
+	LeaderID          int    // so follower can redirect clients
+	LastIncludedIndex int    // the snapshot replaces all entries up through and including index
+	LastIncludedTerm  int    // term of lastIncludedIndex
+	Data              []byte // raw bytes of the snapshot chunk
+}
+
 // example code to send a RequestVote RPC to a peer.
 // peer is the index of the target peer in rf.peers[].
 // expects RPC arguments in args.
@@ -110,7 +118,6 @@ type RPCThreadInfo struct {
 func (rf *Raft) RPCTimeoutWrapper(info RPCThreadInfo, replyCh chan interface{}) {
 	info.startTime = time.Now()
 
-	// DebugLog(dRPC, rf.me, "%s RPC Thread(id: %d) call PEER %d", info.name, info.id, info.peer)
 	switch args := info.args.(type) {
 	case RequestVoteArgs:
 		reply := info.reply.(RequestVoteReply)
@@ -120,13 +127,14 @@ func (rf *Raft) RPCTimeoutWrapper(info RPCThreadInfo, replyCh chan interface{}) 
 		reply := info.reply.(AppendEntriesReply)
 		rf.peers[info.peer].Call(info.name, &args, &reply)
 		info.reply = reply
+	case InstallSnapshotArgs:
+		reply := info.reply.(int)
+		rf.peers[info.peer].Call(info.name, &args, &reply)
+		info.reply = reply
 	}
 
 	if time.Since(info.startTime) < RPCTimeout {
 		replyCh <- info.reply
-		// 	DebugLog(dRPC, rf.me, "%s RPC Thread(id: %d) call success", info.name, info.id)
-		// } else {
-		// 	DebugLog(dRPC, rf.me, "Timeout %s RPC thread(id: %d) exited", info.name, info.id)
 	}
 }
 
@@ -143,6 +151,8 @@ func (rf *Raft) RPCTimeoutTicker(replyCh chan interface{}, info RPCThreadInfo, r
 			replyCh <- RequestVoteReply{}
 		case AppendEntriesReply:
 			replyCh <- AppendEntriesReply{}
+		case int:
+			replyCh <- -1
 		}
 	}
 }

@@ -69,6 +69,13 @@ func minInt(a int, b int) int {
 	return b
 }
 
+func maxInt(a int, b int) int {
+	if a >= b {
+		return a
+	}
+	return b
+}
+
 // Return string form of current raft state
 // Make sure you already hold `rf.mu` before calling this function,
 // or data race will be detected
