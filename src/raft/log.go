@@ -10,16 +10,15 @@ import (
 // The function commits log entries and sends them to the apply channel.
 // All log entries from `rf.lastApplied+1` to `rf.commitIndex`(updated by other functions)
 // will be commmited
-// When you call this function, make sure that you already hold `rf.mu`,
-// or data race will be detected
 func (rf *Raft) commitEntries() {
+	rf.commitMu.Lock()
+	rf.mu.Lock()
 	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
 	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
 	lastApplied := rf.lastApplied
 	rf.lastApplied = rf.commitIndex
 	rf.mu.Unlock()
 
-	rf.commitMu.Lock()
 	for _, entry := range entriesToApply {
 		lastApplied++
 		applyMsg := ApplyMsg{
@@ -47,8 +46,8 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	}
 	DebugLog(dHeartBeart, rf.me, "Recv HEART BEAT <- %d; {T:%d,PLI:%d,PLT:%d,LC:%d,CT:%d}",
 		args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.CommitTerm)
-	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,LII:%d,LIT:%d}",
-		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,NI:%v,LII:%d,LIT:%d}",
+		rf.currentTerm, len(rf.log), rf.commitIndex, rf.nextIndex,
 		rf.lastIncludedIdx, rf.lastIncludedTerm)
 
 	// if current state of this peer is LEADER or CANDIDATE receives heartbeat from another peer
@@ -102,6 +101,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 
 	// if commitIndex > lastApplied; increment lastApplied to commitIndex
 	// and apply all the log entries before commitIndex
+	rf.mu.Unlock()
 	rf.commitEntries()
 }
 
@@ -128,8 +128,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	DebugLog(dAppend, rf.me, "%s]", newEntriesString)
 
-	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,LII:%d,LIT:%d}",
-		rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
+	DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,NI:%v,LII:%d,LIT:%d}",
+		rf.currentTerm, len(rf.log), rf.commitIndex, rf.nextIndex,
 		rf.lastIncludedIdx, rf.lastIncludedTerm)
 
 	// Process log entries from leader
@@ -208,14 +208,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		DebugLog(dCommit, rf.me, "SET CommitIndex -> %d", rf.commitIndex)
 	}
 
-	// if commitIndex > lastApplied; increment lastApplied
-	// apply log[lastApplied] to state machine
-	rf.commitEntries()
-
 	*reply = AppendEntriesReply{
 		Term:    rf.currentTerm,
 		Success: true,
 	}
+
+	// if commitIndex > lastApplied; increment lastApplied
+	// apply log[lastApplied] to state machine
+	rf.mu.Unlock()
+	rf.commitEntries()
 }
 
 // `rf.Start` uses this function as a single thread to reach
@@ -257,6 +258,7 @@ func (rf *Raft) startAgreement(index int) {
 			DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 		}
 
+		rf.mu.Unlock()
 		rf.commitEntries()
 	}
 

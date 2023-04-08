@@ -199,8 +199,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		newEntry := LogEntry{Term: term, Command: command}
 		rf.log = append(rf.log, newEntry)
 		DebugLog(dAppend, rf.me, "Agree On [I:%d,T:%d]", index, term)
-		DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,LA:%d,NI:%v,LII:%d,LIT:%d}",
-			rf.currentTerm, len(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex,
+		DebugLog(dRaftState, rf.me, "RF STATE: {T:%d,LL:%d,CI:%d,NI:%v,LII:%d,LIT:%d}",
+			rf.currentTerm, len(rf.log), rf.commitIndex, rf.nextIndex,
 			rf.lastIncludedIdx, rf.lastIncludedTerm)
 		rf.persist()
 

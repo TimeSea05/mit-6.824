@@ -35,6 +35,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	rf.commitMu.Lock()
+	defer rf.commitMu.Unlock()
 
 	*replyTerm = rf.currentTerm
 	// Reply immediately if term < currentTerm
