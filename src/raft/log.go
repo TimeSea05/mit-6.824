@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+type consensusState struct {
+	mu       *sync.Mutex
+	cond     *sync.Cond
+	replicas int  // how many servers have replicated the log entry successfully
+	exits    int  // how many threads stopped to reach agreement with servers
+	awakened bool // whether or not this thread has been awakened once by `reachConsensusWithPeer` threads
+}
+
 // The function commits log entries and sends them to the apply channel.
 // All log entries from `rf.lastApplied+1` to `rf.commitIndex`(updated by other functions)
 // will be commmited
@@ -222,36 +230,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 // `rf.Start` uses this function as a single thread to reach
 // agreement between leader and followers
-func (rf *Raft) startAgreement(index int) {
+func (rf *Raft) reachConsensus(index int) {
 	var mu sync.Mutex
 	cond := sync.NewCond(&mu)
 
-	// `replicas` represents how many servers have replicated the log entry successfully
-	// initialized to 1 because the leader already appended this entry to its log
-	replicas := 1
+	cs := consensusState{
+		mu:       &mu,
+		cond:     cond,
+		replicas: 1,
+	}
 
-	// when the leader trying to reach agreement with followers on log entry `index`
-	// became follower, all the threads trying to reach agreement with followers should exit
-	exits := 0
-
-	// whether or not this thread has been awakened once by `reachAgreementPeer` threads
-	awakened := false
-
-	mu.Lock()
+	cs.mu.Lock()
 	// issue `AppendEntries` RPCs in parallel to
 	// each of the other servers to replicate the entry
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			continue
 		}
-		go rf.reachAgreementPeer(peer, index, &mu, cond, &replicas, &exits, &awakened)
+		go rf.reachConsensusWithPeer(peer, index, &cs)
 	}
 
 	// wait for the log entry to be safely replicated
-	cond.Wait()
-	awakened = true
+	cs.cond.Wait()
+	cs.awakened = true
 
-	if replicas > len(rf.peers)/2 {
+	if cs.replicas > len(rf.peers)/2 {
 		// update `commitIndex`
 		rf.mu.Lock()
 		if index > rf.commitIndex {
@@ -264,11 +267,11 @@ func (rf *Raft) startAgreement(index int) {
 	}
 
 	// wait for the log entry to be replicated on all followers
-	cond.Wait()
-	mu.Unlock()
+	cs.cond.Wait()
+	cs.mu.Unlock()
 }
 
-func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sync.Cond, replicas *int, exits *int, awakened *bool) {
+func (rf *Raft) reachConsensusWithPeer(peer int, index int, cs *consensusState) {
 	for {
 		rf.mu.Lock()
 
@@ -276,101 +279,111 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 		if rf.killed() || rf.state != LEADER || index-rf.lastIncludedIdx < len(rf.log) {
 			rf.mu.Unlock()
 
-			mu.Lock()
-			*exits++
-			mu.Unlock()
+			cs.mu.Lock()
+			cs.exits++
+			cs.mu.Unlock()
 			break
 		}
 
 		if rf.nextIndex[peer] > rf.lastIncludedIdx {
-			// log about entries leader gonna send to the raft peer
-			sendEntriesStart := rf.nextIndex[peer] - (rf.lastIncludedIdx + 1)
-			sendEntriesStr := fmt.Sprintf("SEND -> PEER %d; [", peer)
-			for idx, entry := range rf.log[sendEntriesStart:] {
-				sendEntriesStr += fmt.Sprintf("I:%d,T:%d;", (rf.lastIncludedIdx+1)+sendEntriesStart+idx, entry.Term)
-			}
-			DebugLog(dSendEntry, rf.me, "%s]", sendEntriesStr)
-
-			// Issue AppendEntries RPC to the raft peer
-			// Every time you issue an RPC, you need to release the lock
-			// in case the RPC timeout
-			reply := rf.issueAppendEntriesRPC(peer)
-
-			// Every time the leader receive a new entry from client, it will start a
-			// `startAgreement` thread, and `index` is just the index of that new entry
-			if reply.Success {
-				rf.mu.Lock()
-				if rf.nextIndex[peer] <= index {
-					rf.nextIndex[peer] = index + 1
-					DebugLog(dSendEntry, rf.me, "SEND -> PEER %d SUCCESS; nextIndex[%d] -> %d; NI:%v",
-						peer, peer, rf.nextIndex[peer], rf.nextIndex)
-				}
-				rf.mu.Unlock()
-
-				mu.Lock()
-				DebugLog(dAgree, rf.me, "REACH Agreement - PEER %d", peer)
-				*replicas++
-				mu.Unlock()
+			success := rf.sendEntriesForConsensus(peer, index, cs)
+			if success {
 				break
 			}
-
-			// AppendEntries RPC did not time out and failed
-			// which means AppendEntries consistency check failed
-			// the leader should decrement nextIndex and retry
-			if reply.Term != 0 {
-				rf.mu.Lock()
-				if reply.Term > rf.currentTerm {
-					rf.currentTerm = reply.Term
-					rf.persist()
-
-					DebugLog(dTermChange, rf.me, "%s -> FOLLOWER; TERM -> %d", rf.stateStr(), rf.currentTerm)
-					rf.state = FOLLOWER
-
-					rf.tickerStartTime = time.Now()
-					rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
-				} else if reply.InConsist {
-					rf.nextIndex[peer] = reply.XIndex
-					DebugLog(dSendEntry, rf.me, "SEND -> PEER %d FAIL; nextIndex[%d] -> %d; NI:%v",
-						peer, peer, rf.nextIndex[peer], rf.nextIndex)
-				}
-				rf.mu.Unlock()
-			}
 		} else {
-			lastIncludedIdx := rf.lastIncludedIdx
-			replyTerm := rf.issueInstallSnapshotRPC(peer)
-			if replyTerm == 0 {
-				continue
-			}
-
-			rf.mu.Lock()
-			if replyTerm > rf.currentTerm {
-				DebugLog(dSnapshot, rf.me, "INSTALL Snapshot -> PEER %d FAIL", peer)
-				rf.currentTerm = replyTerm
-				DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
-				rf.persist()
-
-				DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
-				rf.state = FOLLOWER
-				rf.tickerStartTime = time.Now()
-				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
-			} else {
-				rf.nextIndex[peer] = lastIncludedIdx + 1
-				DebugLog(dSnapshot, rf.me, "INSTALL Snapshot SUCCESS; nextIndex[%d] -> %d", peer, rf.nextIndex[peer])
-			}
-			rf.mu.Unlock()
+			rf.installSnapshotForConsensus(peer)
 		}
 
-		time.Sleep(RPCTimeout)
+		time.Sleep(200 * time.Millisecond)
 	}
 
-	mu.Lock()
-	if (!*awakened && *replicas+*exits > len(rf.peers)/2) || // safely replicated or partially exits
-		(*awakened && *replicas+*exits == len(rf.peers)) { // replicated on all	or all exits
-		mu.Unlock()
-		cond.Signal()
+	cs.mu.Lock()
+	if (!cs.awakened && cs.replicas+cs.exits > len(rf.peers)/2) || // safely replicated or partially exits
+		(cs.awakened && cs.replicas+cs.exits == len(rf.peers)) { // replicated on all	or all exits
+		cs.mu.Unlock()
+		cs.cond.Signal()
 	} else {
-		mu.Unlock()
+		cs.mu.Unlock()
 	}
+}
+
+func (rf *Raft) sendEntriesForConsensus(peer int, index int, cs *consensusState) bool {
+	// log about entries leader gonna send to the raft peer
+	sendEntriesStart := rf.nextIndex[peer] - (rf.lastIncludedIdx + 1)
+	sendEntriesStr := fmt.Sprintf("SEND -> PEER %d; [", peer)
+	for idx, entry := range rf.log[sendEntriesStart:] {
+		sendEntriesStr += fmt.Sprintf("I:%d,T:%d;", (rf.lastIncludedIdx+1)+sendEntriesStart+idx, entry.Term)
+	}
+	DebugLog(dSendEntry, rf.me, "%s]", sendEntriesStr)
+
+	// Issue AppendEntries RPC to the raft peer
+	// Every time you issue an RPC, you need to release the lock
+	// in case the RPC timeout
+	reply := rf.issueAppendEntriesRPC(peer)
+
+	// Every time the leader receive a new entry from client, it will start a
+	// `reachConsensus` thread, and `index` is just the index of that new entry
+	if reply.Success {
+		rf.mu.Lock()
+		if rf.nextIndex[peer] <= index {
+			rf.nextIndex[peer] = index + 1
+			DebugLog(dSendEntry, rf.me, "SEND -> PEER %d SUCCESS; nextIndex[%d] -> %d; NI:%v",
+				peer, peer, rf.nextIndex[peer], rf.nextIndex)
+		}
+		rf.mu.Unlock()
+
+		cs.mu.Lock()
+		DebugLog(dAgree, rf.me, "REACH Agreement - PEER %d", peer)
+		cs.replicas++
+		cs.mu.Unlock()
+
+		return true
+	}
+
+	// AppendEntries RPC did not time out and failed
+	// which means AppendEntries consistency check failed
+	// the leader should decrement nextIndex and retry
+	if reply.Term != 0 {
+		rf.mu.Lock()
+		if reply.Term > rf.currentTerm {
+			rf.currentTerm = reply.Term
+			rf.persist()
+
+			DebugLog(dTermChange, rf.me, "%s -> FOLLOWER; TERM -> %d", rf.stateStr(), rf.currentTerm)
+			rf.state = FOLLOWER
+
+			rf.tickerStartTime = time.Now()
+			rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
+		} else if reply.InConsist {
+			rf.nextIndex[peer] = reply.XIndex
+			DebugLog(dSendEntry, rf.me, "SEND -> PEER %d FAIL; nextIndex[%d] -> %d; NI:%v",
+				peer, peer, rf.nextIndex[peer], rf.nextIndex)
+		}
+		rf.mu.Unlock()
+	}
+	return false
+}
+
+func (rf *Raft) installSnapshotForConsensus(peer int) {
+	lastIncludedIdx := rf.lastIncludedIdx
+	replyTerm := rf.issueInstallSnapshotRPC(peer)
+
+	rf.mu.Lock()
+	if replyTerm > rf.currentTerm {
+		DebugLog(dSnapshot, rf.me, "INSTALL Snapshot -> PEER %d FAIL", peer)
+		rf.currentTerm = replyTerm
+		DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
+		rf.persist()
+
+		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+		rf.state = FOLLOWER
+		rf.tickerStartTime = time.Now()
+		rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
+	} else if replyTerm != 0 {
+		rf.nextIndex[peer] = lastIncludedIdx + 1
+		DebugLog(dSnapshot, rf.me, "INSTALL Snapshot SUCCESS; nextIndex[%d] -> %d", peer, rf.nextIndex[peer])
+	}
+	rf.mu.Unlock()
 }
 
 // Make sure that every time you call this function

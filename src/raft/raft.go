@@ -195,7 +195,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			rf.lastIncludedIdx, rf.lastIncludedTerm)
 		rf.persist()
 
-		go rf.startAgreement(index)
+		go rf.reachConsensus(index)
 	}
 	return index, term, isLeader
 }
