@@ -335,6 +335,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 				rf.mu.Unlock()
 			}
 		} else {
+			lastIncludedIdx := rf.lastIncludedIdx
 			replyTerm := rf.issueInstallSnapshotRPC(peer)
 			if replyTerm == 0 {
 				continue
@@ -352,7 +353,7 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 				rf.tickerStartTime = time.Now()
 				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 			} else {
-				rf.nextIndex[peer] = rf.lastIncludedIdx + 1
+				rf.nextIndex[peer] = lastIncludedIdx + 1
 				DebugLog(dSnapshot, rf.me, "INSTALL Snapshot SUCCESS; nextIndex[%d] -> %d", peer, rf.nextIndex[peer])
 			}
 			rf.mu.Unlock()
