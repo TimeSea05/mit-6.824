@@ -7,6 +7,7 @@
   * leader election
   * log replication
   * persistence
+  * snapshot
 
 
 欢迎探讨和交流，我的个人邮箱：anwentao1@gmail.com
