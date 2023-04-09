@@ -322,8 +322,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 					rf.currentTerm = reply.Term
 					rf.persist()
 
-					rf.state = FOLLOWER
 					DebugLog(dTermChange, rf.me, "%s -> FOLLOWER; TERM -> %d", rf.stateStr(), rf.currentTerm)
+					rf.state = FOLLOWER
 
 					rf.tickerStartTime = time.Now()
 					rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
@@ -348,8 +348,8 @@ func (rf *Raft) reachAgreementPeer(peer int, index int, mu *sync.Mutex, cond *sy
 				DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
 				rf.persist()
 
+				DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
 				rf.state = FOLLOWER
-				DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr(), rf.currentTerm)
 				rf.tickerStartTime = time.Now()
 				rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 			} else {

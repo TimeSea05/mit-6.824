@@ -33,8 +33,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 	}
 
 	if rf.state != FOLLOWER {
-		rf.state = FOLLOWER
 		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+		rf.state = FOLLOWER
 		rf.tickerStartTime = time.Now()
 		rf.electionTimeout = time.Millisecond * time.Duration(ElectionTimeoutLeftEnd+rand.Intn(ElectionTimeoutInterval))
 	}

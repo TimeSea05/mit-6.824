@@ -37,8 +37,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
 
 		if rf.state != FOLLOWER {
-			rf.state = FOLLOWER
 			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+			rf.state = FOLLOWER
 		}
 		rf.persist()
 	}
@@ -132,8 +132,8 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 		rf.persist()
 
 		if rf.state != FOLLOWER {
-			rf.state = FOLLOWER
 			DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+			rf.state = FOLLOWER
 		}
 	}
 	wg.Done()
@@ -256,8 +256,8 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 		DebugLog(dTermChange, rf.me, "TERM -> %d", rf.currentTerm)
 		rf.persist()
 
-		rf.state = FOLLOWER
 		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+		rf.state = FOLLOWER
 		rf.mu.Unlock()
 	}
 }
