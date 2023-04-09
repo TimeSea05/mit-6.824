@@ -108,7 +108,7 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 
 	var reply RequestVoteReply
 	replyCh := make(chan interface{}, 1)
-	rpcInfo := RPCThreadInfo{
+	rpcInfo := RPCInfo{
 		peer:  peer,
 		name:  "Raft.RequestVote",
 		args:  args,
@@ -116,8 +116,8 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 	}
 
 	rpcFinished := make(chan bool, 1)
-	go rf.RPCTimeoutWrapper(rpcInfo, replyCh)
-	go rf.RPCTimeoutTicker(replyCh, rpcInfo, rpcFinished)
+	go rf.RPCWrapper(rpcInfo, replyCh)
+	go rf.RPCTimeoutHandler(replyCh, rpcInfo, rpcFinished)
 	voteReply := (<-replyCh).(RequestVoteReply)
 	rpcFinished <- true
 
@@ -237,7 +237,7 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 	rf.mu.Unlock()
 
 	var reply AppendEntriesReply
-	rpcInfo := RPCThreadInfo{
+	rpcInfo := RPCInfo{
 		peer:  peer,
 		name:  "Raft.AppendEntries",
 		args:  args,
@@ -245,8 +245,8 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 	}
 
 	rpcFinished := make(chan bool, 1)
-	go rf.RPCTimeoutWrapper(rpcInfo, replyCh)
-	go rf.RPCTimeoutTicker(replyCh, rpcInfo, rpcFinished)
+	go rf.RPCWrapper(rpcInfo, replyCh)
+	go rf.RPCTimeoutHandler(replyCh, rpcInfo, rpcFinished)
 	hbeatReply := (<-replyCh).(AppendEntriesReply)
 	rpcFinished <- true
 

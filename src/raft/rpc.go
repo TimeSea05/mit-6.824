@@ -90,7 +90,7 @@ type InstallSnapshotArgs struct {
 
 	When there is network latency, it may take a long time to wait for the return of an RPC call
 	To avoid this, creates a goroutine to make an RPC call, and pass a channel to it
-	(here the channel it wrapped in RPCThreadInfo struct)
+	(here the channel it wrapped in RPCInfo struct)
 	when RPC finished, the goroutine will first check if the time exceed `RPCTimeout`
 	if not, put RPC reply into that channel, else exit
 */
@@ -100,7 +100,7 @@ const RPCTimeout = 400 * time.Millisecond
 // All you need to make an RPC call
 // type of args and reply is `interface{}`
 // to support all kinds of RPCArgs and RPCReply
-type RPCThreadInfo struct {
+type RPCInfo struct {
 	name      string
 	peer      int       // which raft peer to send RPC to
 	startTime time.Time // time the RPC is called
@@ -110,12 +110,12 @@ type RPCThreadInfo struct {
 }
 
 // This wrapper is used to deal with RPC network latency issues
-// Every time you need to make an RPC call, put all info you need into a RPCThreadInfo struct,
+// Every time you need to make an RPC call, put all info you need into a RPCInfo struct,
 // start a new `RPCTimeoutWapper` goroutine, pass that struct to the wrapper.
 // The wrapper will make an RPC call, wait for its return
 // When it returns, it will check if timeout occurs
 // if not, put RPC reply into channel `replyCh`, else exit
-func (rf *Raft) RPCTimeoutWrapper(info RPCThreadInfo, replyCh chan interface{}) {
+func (rf *Raft) RPCWrapper(info RPCInfo, replyCh chan interface{}) {
 	info.startTime = time.Now()
 
 	switch args := info.args.(type) {
@@ -138,12 +138,12 @@ func (rf *Raft) RPCTimeoutWrapper(info RPCThreadInfo, replyCh chan interface{}) 
 	}
 }
 
-// Every time you make an RPC call, you need to start a `RPCTimeoutTicker` thread
+// Every time you make an RPC call, you need to start a `RPCTimeoutHandler` thread
 // if the RPC call you make time out, this thread will send an empty reply to `replyCh`
 // which means the return value of RPC call made before is ignored
 // If RPC call finished successfully, main thread(who start this ticker thread) will
 // send a value to channel `rpcFinished` to tell the thread not to send a empty reply to `replyCh`
-func (rf *Raft) RPCTimeoutTicker(replyCh chan interface{}, info RPCThreadInfo, rpcFinished chan bool) {
+func (rf *Raft) RPCTimeoutHandler(replyCh chan interface{}, info RPCInfo, rpcFinished chan bool) {
 	time.Sleep(RPCTimeout)
 	if len(replyCh) == 0 && len(rpcFinished) == 0 {
 		switch info.reply.(type) {

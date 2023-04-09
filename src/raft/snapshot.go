@@ -98,7 +98,7 @@ func (rf *Raft) issueInstallSnapshotRPC(peer int) int {
 
 	var reply int
 	replyCh := make(chan interface{}, 1)
-	rpcInfo := RPCThreadInfo{
+	rpcInfo := RPCInfo{
 		peer:  peer,
 		name:  "Raft.InstallSnapshot",
 		args:  args,
@@ -106,8 +106,8 @@ func (rf *Raft) issueInstallSnapshotRPC(peer int) int {
 	}
 	rpcFinished := make(chan bool, 1)
 
-	go rf.RPCTimeoutWrapper(rpcInfo, replyCh)
-	go rf.RPCTimeoutTicker(replyCh, rpcInfo, rpcFinished)
+	go rf.RPCWrapper(rpcInfo, replyCh)
+	go rf.RPCTimeoutHandler(replyCh, rpcInfo, rpcFinished)
 
 	replyTerm := (<-replyCh).(int)
 	rpcFinished <- true

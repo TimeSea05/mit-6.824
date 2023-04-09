@@ -417,7 +417,7 @@ func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 	rf.mu.Unlock()
 
 	var reply AppendEntriesReply
-	rpcInfo := RPCThreadInfo{
+	rpcInfo := RPCInfo{
 		peer:  peer,
 		name:  "Raft.AppendEntries",
 		args:  args,
@@ -426,8 +426,8 @@ func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 
 	replyCh := make(chan interface{}, 1)
 	rpcFinished := make(chan bool, 1)
-	go rf.RPCTimeoutWrapper(rpcInfo, replyCh)
-	go rf.RPCTimeoutTicker(replyCh, rpcInfo, rpcFinished)
+	go rf.RPCWrapper(rpcInfo, replyCh)
+	go rf.RPCTimeoutHandler(replyCh, rpcInfo, rpcFinished)
 
 	appendEntryReplyIface := <-replyCh
 	appendEntryReply := appendEntryReplyIface.(AppendEntriesReply)
