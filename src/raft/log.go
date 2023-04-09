@@ -13,6 +13,7 @@ import (
 func (rf *Raft) commitEntries() {
 	rf.commitMu.Lock()
 	rf.mu.Lock()
+	DebugLog(dCommit, rf.me, "COMMIT FROM LA:%d -> CI:%d", rf.lastApplied, rf.commitIndex)
 	entriesToApply := make([]LogEntry, rf.commitIndex-rf.lastApplied)
 	copy(entriesToApply, rf.log[rf.lastApplied-rf.lastIncludedIdx:rf.commitIndex-rf.lastIncludedIdx])
 	lastApplied := rf.lastApplied
