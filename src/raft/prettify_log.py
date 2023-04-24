@@ -6,20 +6,25 @@ from rich.columns import Columns
 
 Topics = {
   'RFSTA': '#0cf25d', # raft state
-  'STACH': '#ff81d0',
-  'TRMCH': '#ff81d0',
+  'STACH': '#ff81d0', # state change
+  'TRMCH': '#ff81d0', # term change
 
-  'ELECT': 'yellow',
-  'VOTE ': 'yellow',
-  'HBEAT': 'yellow',
+  'ELECT': 'yellow',  # election
+  'VOTE ': 'yellow',  # vote
+  'HBEAT': 'yellow',  # heart beat
 
-  'APPND': '#ff9933',
-  'AGREE': '#ff9933',
-  'SNDEN': 'blue',
-  'COMIT': 'white',
-  'PERST': '#d92525',
-  'SSHOT': '#00bfae',
-  'LOCK ': 'red'
+  'APPND': '#ff9933', # append entries
+  'AGREE': '#ff9933', # agreement
+  'SNDEN': 'blue',    # send entries
+  'COMIT': 'white',   # commit entries
+  'PERST': '#d92525', # persistence
+  'SSHOT': '#00bfae', # snapshot
+  'LOCK ': 'red',      # locking
+
+  "CAGET": '#a6bc09',
+  "CAPUT": '#a6bc09',
+  "REGET": '#a6bc09',
+  "REGET": '#a6bc09',
 }
 
 log = sys.stdin
