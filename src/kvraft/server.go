@@ -1,28 +1,22 @@
 package kvraft
 
 import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-	"log"
-	"sync"
-	"sync/atomic"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type  string // Get, Put or Append
+	Key   string
+	Value string
 }
 
 type KVServer struct {
@@ -35,18 +29,58 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	cond *sync.Cond
+	db   map[string]string
 }
-
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	kv.mu.Lock()
+
+	op := Op{
+		Type: "Get",
+	}
+	_, _, ok := kv.rf.Start(op)
+	if !ok {
+		reply.Err = Err(fmt.Sprintf("%d is NOT LEADER", kv.me))
+		raft.DebugLog(raft.DReplyGet, kv.me, "Reject: %s", reply.Err)
+		kv.mu.Unlock()
+		return
+	}
+
+	kv.cond.Wait()
+
+	reply.Value = kv.db[args.Key]
+	reply.Err = ""
+	raft.DebugLog(raft.DReplyGet, kv.me, "Reply Get %s: %s", args.Key, reply.Value)
+
+	kv.mu.Unlock()
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	kv.mu.Lock()
+
+	op := Op{
+		Type:  args.Op,
+		Key:   args.Key,
+		Value: args.Value,
+	}
+	_, _, ok := kv.rf.Start(op)
+	if !ok {
+		reply.Err = Err(fmt.Sprintf("%d is NOT LEADER", kv.me))
+		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
+		kv.mu.Unlock()
+		return
+	}
+
+	kv.cond.Wait()
+
+	reply.Err = ""
+	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reply %s: SUCCESS; db[%s]:%s", args.Op, args.Key, args.Value)
+	kv.mu.Unlock()
 }
 
-//
 // the tester calls Kill() when a KVServer instance won't
 // be needed again. for your convenience, we supply
 // code to set rf.dead (without needing a lock),
@@ -55,7 +89,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // code to Kill(). you're not required to do anything
 // about this, but it may be convenient (for example)
 // to suppress debug output from a Kill()ed instance.
-//
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
@@ -67,7 +100,24 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
-//
+func (kv *KVServer) readApplyCh() {
+	for msg := range kv.applyCh {
+		if kv.killed() {
+			return
+		}
+
+		kv.mu.Lock()
+		op := msg.Command.(Op)
+		if op.Type == "Put" {
+			kv.db[op.Key] = op.Value
+		} else if op.Type == "Append" {
+			kv.db[op.Key] += op.Value
+		}
+		kv.mu.Unlock()
+		kv.cond.Signal()
+	}
+}
+
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
@@ -80,7 +130,6 @@ func (kv *KVServer) killed() bool {
 // you don't need to snapshot.
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
-//
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
@@ -96,6 +145,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.cond = sync.NewCond(&kv.mu)
+	kv.db = make(map[string]string)
+	go kv.readApplyCh()
 
 	return kv
 }
