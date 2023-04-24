@@ -15,7 +15,7 @@ import (
 var debugLevel int
 var debugStart time.Time
 
-// event topics
+// raft topics
 const (
 	dElection    = "ELECT"
 	dStateChange = "STACH"
@@ -23,9 +23,6 @@ const (
 	dVote        = "VOTE "
 	dHeartBeart  = "HBEAT"
 	dLock        = "LOCK "
-	dTimer       = "TIMER"
-	dWaitGroup   = "WGRUP"
-	dRPC         = "RPCTH"
 	dAppend      = "APPND"
 	dSendEntry   = "SNDEN"
 	dAgree       = "AGREE"
@@ -34,6 +31,17 @@ const (
 	dPersist     = "PERST"
 	dSnapshot    = "SSHOT"
 )
+
+// kv raft topics
+const (
+	DCallGet          = "CAGET"
+	DCallPutOrAppend  = "CAPUT"
+	DReplyGet         = "REGET"
+	DReplyPutOrAppend = "REPUT"
+)
+
+// map topic -> debugLevel
+var debugLevelOfTopic map[string]int
 
 func init() {
 	// initialize debug verbosity
@@ -48,14 +56,30 @@ func init() {
 
 	// set debug start time
 	debugStart = time.Now()
+
+	// initialize map
+	debugLevelOfTopic = make(map[string]int)
+
+	raftTopics := []string{
+		"ELECT", "STACH", "TRMCH", "VOTE ", "HBEAT",
+		"LOCK ", "APPND", "SNDEN", "AGREE", "COMIT",
+		"RFSTA", "PERST", "SSHOT",
+	}
+	for _, str := range raftTopics {
+		debugLevelOfTopic[str] = 1
+	}
+
+	kvraftTopics := []string{
+		"CAGET", "CAPUT", "REGET", "REPUT",
+	}
+	for _, str := range kvraftTopics {
+		debugLevelOfTopic[str] = 2
+	}
 }
 
 func DebugLog(topic string, peer int, format string, a ...interface{}) (n int, err error) {
-	if debugLevel > 0 {
-		if debugLevel < 2 && topic == dPersist {
-			return
-		}
-
+	level := debugLevelOfTopic[topic]
+	if level <= debugLevel {
 		time := time.Since(debugStart).Milliseconds()
 		prefix := fmt.Sprintf("%6d %s PEER %d: ", time, topic, peer)
 		newFmt := prefix + format + "\n"
