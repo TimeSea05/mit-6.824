@@ -6,3 +6,4 @@ api.key
 *.zip
 *.sh
 test.py
+prettify_log.py
