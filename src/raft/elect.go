@@ -109,10 +109,10 @@ func (rf *Raft) issueRequestVoteRPC(peer int, wg *sync.WaitGroup, votes *int) {
 	var reply RequestVoteReply
 	replyCh := make(chan interface{}, 1)
 	rpcInfo := RPCInfo{
-		peer:  peer,
-		name:  "Raft.RequestVote",
-		args:  args,
-		reply: reply,
+		Peer:  peer,
+		Name:  "Raft.RequestVote",
+		Args:  args,
+		Reply: reply,
 	}
 
 	rpcFinished := make(chan bool, 1)
@@ -238,10 +238,10 @@ func (rf *Raft) issueHeartBeatRPC(peer int) {
 
 	var reply AppendEntriesReply
 	rpcInfo := RPCInfo{
-		peer:  peer,
-		name:  "Raft.AppendEntries",
-		args:  args,
-		reply: reply,
+		Peer:  peer,
+		Name:  "Raft.AppendEntries",
+		Args:  args,
+		Reply: reply,
 	}
 
 	rpcFinished := make(chan bool, 1)

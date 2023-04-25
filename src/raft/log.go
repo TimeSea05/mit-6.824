@@ -418,10 +418,10 @@ func (rf *Raft) issueAppendEntriesRPC(peer int) AppendEntriesReply {
 
 	var reply AppendEntriesReply
 	rpcInfo := RPCInfo{
-		peer:  peer,
-		name:  "Raft.AppendEntries",
-		args:  args,
-		reply: reply,
+		Peer:  peer,
+		Name:  "Raft.AppendEntries",
+		Args:  args,
+		Reply: reply,
 	}
 
 	replyCh := make(chan interface{}, 1)

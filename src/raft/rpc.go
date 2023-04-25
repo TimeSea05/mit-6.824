@@ -101,12 +101,12 @@ const RPCTimeout = 400 * time.Millisecond
 // type of args and reply is `interface{}`
 // to support all kinds of RPCArgs and RPCReply
 type RPCInfo struct {
-	name      string
-	peer      int       // which raft peer to send RPC to
-	startTime time.Time // time the RPC is called
+	Name      string
+	Peer      int       // which raft peer to send RPC to
+	StartTime time.Time // time the RPC is called
 
-	args  interface{}
-	reply interface{}
+	Args  interface{}
+	Reply interface{}
 }
 
 // This wrapper is used to deal with RPC network latency issues
@@ -116,25 +116,25 @@ type RPCInfo struct {
 // When it returns, it will check if timeout occurs
 // if not, put RPC reply into channel `replyCh`, else exit
 func (rf *Raft) RPCWrapper(info RPCInfo, replyCh chan interface{}) {
-	info.startTime = time.Now()
+	info.StartTime = time.Now()
 
-	switch args := info.args.(type) {
+	switch args := info.Args.(type) {
 	case RequestVoteArgs:
-		reply := info.reply.(RequestVoteReply)
-		rf.peers[info.peer].Call(info.name, &args, &reply)
-		info.reply = reply
+		reply := info.Reply.(RequestVoteReply)
+		rf.peers[info.Peer].Call(info.Name, &args, &reply)
+		info.Reply = reply
 	case AppendEntriesArgs:
-		reply := info.reply.(AppendEntriesReply)
-		rf.peers[info.peer].Call(info.name, &args, &reply)
-		info.reply = reply
+		reply := info.Reply.(AppendEntriesReply)
+		rf.peers[info.Peer].Call(info.Name, &args, &reply)
+		info.Reply = reply
 	case InstallSnapshotArgs:
-		reply := info.reply.(int)
-		rf.peers[info.peer].Call(info.name, &args, &reply)
-		info.reply = reply
+		reply := info.Reply.(int)
+		rf.peers[info.Peer].Call(info.Name, &args, &reply)
+		info.Reply = reply
 	}
 
-	if time.Since(info.startTime) < RPCTimeout {
-		replyCh <- info.reply
+	if time.Since(info.StartTime) < RPCTimeout {
+		replyCh <- info.Reply
 	}
 }
 
@@ -146,7 +146,7 @@ func (rf *Raft) RPCWrapper(info RPCInfo, replyCh chan interface{}) {
 func (rf *Raft) RPCTimeoutHandler(replyCh chan interface{}, info RPCInfo, rpcFinished chan bool) {
 	time.Sleep(RPCTimeout)
 	if len(replyCh) == 0 && len(rpcFinished) == 0 {
-		switch info.reply.(type) {
+		switch info.Reply.(type) {
 		case RequestVoteReply:
 			replyCh <- RequestVoteReply{}
 		case AppendEntriesReply:

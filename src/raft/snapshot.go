@@ -99,10 +99,10 @@ func (rf *Raft) issueInstallSnapshotRPC(peer int) int {
 	var reply int
 	replyCh := make(chan interface{}, 1)
 	rpcInfo := RPCInfo{
-		peer:  peer,
-		name:  "Raft.InstallSnapshot",
-		args:  args,
-		reply: reply,
+		Peer:  peer,
+		Name:  "Raft.InstallSnapshot",
+		Args:  args,
+		Reply: reply,
 	}
 	rpcFinished := make(chan bool, 1)
 
