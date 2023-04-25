@@ -1,9 +1,16 @@
 package kvraft
 
+import (
+	"time"
+
+	"6.824/raft"
+)
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrRPCTimeout  = "ErrTimeout"
 )
 
 type Err string
@@ -30,4 +37,35 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+func (ck *Clerk) RPCWrapper(info raft.RPCInfo, replyCh chan interface{}) {
+	info.StartTime = time.Now()
+
+	switch args := info.Args.(type) {
+	case GetArgs:
+		reply := info.Reply.(GetReply)
+		ck.servers[info.Peer].Call(info.Name, &args, &reply)
+		info.Reply = reply
+	case PutAppendArgs:
+		reply := info.Reply.(PutAppendReply)
+		ck.servers[info.Peer].Call(info.Name, &args, &reply)
+		info.Reply = reply
+	}
+
+	if time.Since(info.StartTime) < raft.RPCTimeout {
+		replyCh <- info.Reply
+	}
+}
+
+func (ck *Clerk) RPCTimeoutHandler(replyCh chan interface{}, info raft.RPCInfo, rpcFinished chan bool) {
+	time.Sleep(raft.RPCTimeout)
+	if len(replyCh) == 0 && len(rpcFinished) == 0 {
+		switch info.Reply.(type) {
+		case GetReply:
+			replyCh <- GetReply{Err: ErrRPCTimeout}
+		case PutAppendReply:
+			replyCh <- PutAppendReply{Err: ErrRPCTimeout}
+		}
+	}
 }

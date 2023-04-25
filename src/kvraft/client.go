@@ -52,17 +52,42 @@ func (ck *Clerk) Get(key string) string {
 	}
 
 	for {
-		var reply GetReply
-		raft.DebugLog(raft.DCallGet, ck.clerkID, "Get %s", key)
-		ok := ck.servers[ck.curLeader].Call("KVServer.Get", &args, &reply)
-		if ok && reply.Err == "" {
+		reply := ck.issueGetRPC(args)
+		if reply.Err == OK {
 			raft.DebugLog(raft.DCallGet, ck.clerkID, "Get SUCCESS: {%s: %s}", key, reply.Value)
 			return reply.Value
+		} else if reply.Err == ErrNoKey {
+			raft.DebugLog(raft.DCallGet, ck.clerkID, "GET FAIL: No Such Key(%s) in DB", key)
+			return reply.Value
 		}
+
 		raft.DebugLog(raft.DCallGet, ck.clerkID, "Get FAIL: %s", reply.Err)
-		ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
+		if reply.Err == ErrWrongLeader {
+			ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
+		}
 		time.Sleep(RETRY_INTERVAL)
 	}
+}
+
+func (ck *Clerk) issueGetRPC(args GetArgs) GetReply {
+	raft.DebugLog(raft.DCallGet, ck.clerkID, "Get %s", args.Key)
+	rpcInfo := raft.RPCInfo{
+		Peer:  ck.curLeader,
+		Name:  "KVServer.Get",
+		Args:  args,
+		Reply: GetReply{},
+	}
+
+	replyCh := make(chan interface{}, 1)
+	rpcFinished := make(chan bool, 1)
+
+	go ck.RPCWrapper(rpcInfo, replyCh)
+	go ck.RPCTimeoutHandler(replyCh, rpcInfo, rpcFinished)
+
+	getReply := (<-replyCh).(GetReply)
+	rpcFinished <- true
+
+	return getReply
 }
 
 // shared by Put and Append.
@@ -82,18 +107,40 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	}
 
 	for {
-		var reply PutAppendReply
-		raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s}", op, key, value)
-		ok := ck.servers[ck.curLeader].Call("KVServer.PutAppend", &args, &reply)
-		if ok && reply.Err == "" {
+		reply := ck.issuePutAppendRPC(args)
+		if reply.Err == OK {
 			raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s} SUCCESS", op, key, value)
 			break
 		}
 
-		raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s} FAIL", op, key, value)
-		ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
+		raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s} FAIL: %s", op, key, value, reply.Err)
+		if reply.Err == ErrWrongLeader {
+			ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
+		}
+
 		time.Sleep(RETRY_INTERVAL)
 	}
+}
+
+func (ck *Clerk) issuePutAppendRPC(args PutAppendArgs) PutAppendReply {
+	raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s}", args.Op, args.Key, args.Value)
+	rpcInfo := raft.RPCInfo{
+		Peer:  ck.curLeader,
+		Name:  "KVServer.PutAppend",
+		Args:  args,
+		Reply: PutAppendReply{},
+	}
+
+	replyCh := make(chan interface{}, 1)
+	rpcFinished := make(chan bool, 1)
+
+	go ck.RPCWrapper(rpcInfo, replyCh)
+	go ck.RPCTimeoutHandler(replyCh, rpcInfo, rpcFinished)
+
+	putAppendReply := (<-replyCh).(PutAppendReply)
+	rpcFinished <- true
+
+	return putAppendReply
 }
 
 func (ck *Clerk) Put(key string, value string) {

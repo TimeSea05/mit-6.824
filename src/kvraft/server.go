@@ -1,7 +1,6 @@
 package kvraft
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -42,7 +41,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 	_, _, ok := kv.rf.Start(op)
 	if !ok {
-		reply.Err = Err(fmt.Sprintf("%d is NOT LEADER", kv.me))
+		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyGet, kv.me, "Reject: %s", reply.Err)
 		kv.mu.Unlock()
 		return
@@ -51,7 +50,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.cond.Wait()
 
 	reply.Value = kv.db[args.Key]
-	reply.Err = ""
+	reply.Err = OK
 	raft.DebugLog(raft.DReplyGet, kv.me, "Reply Get %s: %s", args.Key, reply.Value)
 
 	kv.mu.Unlock()
@@ -68,7 +67,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	_, _, ok := kv.rf.Start(op)
 	if !ok {
-		reply.Err = Err(fmt.Sprintf("%d is NOT LEADER", kv.me))
+		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
 		kv.mu.Unlock()
 		return
@@ -76,7 +75,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	kv.cond.Wait()
 
-	reply.Err = ""
+	reply.Err = OK
 	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reply %s: SUCCESS; db[%s]:%s", args.Op, args.Key, args.Value)
 	kv.mu.Unlock()
 }
