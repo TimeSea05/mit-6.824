@@ -46,6 +46,8 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 
 	// reply false if term < currentTerm
 	if args.Term < rf.currentTerm {
+		DebugLog(dAppend, rf.me, "REJECT: Leader's TERM %d < PEER %d's TERM %d",
+			args.Term, rf.me, rf.currentTerm)
 		*reply = AppendEntriesReply{
 			Term:    rf.currentTerm,
 			Success: false,
@@ -153,6 +155,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.mu.Unlock()
 		return
 	}
+
+	// if current state of this peer is LEADER or CANDIDATE receives heartbeat from another peer
+	// this peer should become follower
+	if rf.state != FOLLOWER {
+		DebugLog(dStateChange, rf.me, "%s -> FOLLOWER", rf.stateStr())
+		rf.state = FOLLOWER
+	}
+
+	if rf.currentTerm < args.Term {
+		rf.currentTerm = args.Term
+		DebugLog(dTermChange, rf.me, "SET TERM -> %d", rf.currentTerm)
+		rf.persist()
+	}
+	rf.leaderId = args.LeaderID
 
 	// 2. reply false if log doesn't contain an entry at prevLogIndex
 	// whose term matches prevLogTerm
