@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -13,9 +14,11 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type  string // Get, Put or Append
-	Key   string
-	Value string
+	Type    string // Get, Put or Append
+	Key     string
+	Value   string
+	ClerkID int
+	RPCID   int
 }
 
 type KVServer struct {
@@ -30,24 +33,46 @@ type KVServer struct {
 	// Your definitions here.
 	cond *sync.Cond
 	db   map[string]string
+
+	// clerkID -> `RPCID` of lastly executed RPC call
+	executed map[int][]int
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
-
-	op := Op{
-		Type: "Get",
-	}
-	_, _, ok := kv.rf.Start(op)
-	if !ok {
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
 		reply.Err = ErrWrongLeader
-		raft.DebugLog(raft.DReplyGet, kv.me, "Reject: %s", reply.Err)
+		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
 		kv.mu.Unlock()
 		return
 	}
 
+	idx := sort.Search(len(kv.executed[args.ClerkID]), func(i int) bool {
+		return kv.executed[args.ClerkID][i] == args.SuccessRPCID
+	})
+	if idx != len(kv.executed[args.ClerkID]) {
+		kv.executed[args.ClerkID] = kv.executed[args.ClerkID][idx+1:]
+	}
+
+	op := Op{
+		Type:    "Get",
+		Key:     args.Key,
+		ClerkID: args.ClerkID,
+		RPCID:   args.RPCID,
+	}
+
+	kv.rf.Start(op)
 	kv.cond.Wait()
+
+	_, isLeader = kv.rf.GetState()
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
+		kv.mu.Unlock()
+		return
+	}
 
 	reply.Value = kv.db[args.Key]
 	reply.Err = OK
@@ -60,23 +85,42 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
 
-	op := Op{
-		Type:  args.Op,
-		Key:   args.Key,
-		Value: args.Value,
-	}
-	_, _, ok := kv.rf.Start(op)
-	if !ok {
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
 		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
 		kv.mu.Unlock()
 		return
 	}
 
+	idx := sort.Search(len(kv.executed[args.ClerkID]), func(i int) bool {
+		return kv.executed[args.ClerkID][i] == args.SuccessRPCID
+	})
+	if idx != len(kv.executed[args.ClerkID]) {
+		kv.executed[args.ClerkID] = kv.executed[args.ClerkID][idx+1:]
+	}
+
+	op := Op{
+		Type:    args.Op,
+		Key:     args.Key,
+		Value:   args.Value,
+		ClerkID: args.ClerkID,
+		RPCID:   args.RPCID,
+	}
+
+	kv.rf.Start(op)
 	kv.cond.Wait()
 
+	_, isLeader = kv.rf.GetState()
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
+		kv.mu.Unlock()
+		return
+	}
+
 	reply.Err = OK
-	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reply %s: SUCCESS; db[%s]:%s", args.Op, args.Key, args.Value)
+	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reply %s: SUCCESS; db[%s]:%s", args.Op, args.Key, kv.db[args.Key])
 	kv.mu.Unlock()
 }
 
@@ -107,10 +151,23 @@ func (kv *KVServer) readApplyCh() {
 
 		kv.mu.Lock()
 		op := msg.Command.(Op)
-		if op.Type == "Put" {
-			kv.db[op.Key] = op.Value
-		} else if op.Type == "Append" {
-			kv.db[op.Key] += op.Value
+
+		// search if this op has already been executed
+		idx := sort.Search(len(kv.executed[op.ClerkID]), func(i int) bool {
+			return kv.executed[op.ClerkID][i] == op.RPCID
+		})
+
+		// not executed
+		if idx == len(kv.executed[op.ClerkID]) {
+			switch op.Type {
+			case "Put":
+				kv.db[op.Key] = op.Value
+			case "Append":
+				kv.db[op.Key] += op.Value
+			}
+			raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "(CK:%d,RPC:%d,Op:%s,Key:%s,Value:%s): db[%s]==%s",
+				op.ClerkID, op.RPCID, op.Type, op.Key, op.Value, op.Key, kv.db[op.Key])
+			kv.executed[op.ClerkID] = append(kv.executed[op.ClerkID], op.RPCID)
 		}
 		kv.mu.Unlock()
 		kv.cond.Signal()
@@ -146,6 +203,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.cond = sync.NewCond(&kv.mu)
 	kv.db = make(map[string]string)
+	kv.executed = make(map[int][]int)
+
 	go kv.readApplyCh()
 
 	return kv

@@ -11,6 +11,7 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrRPCTimeout  = "ErrTimeout"
+	ErrRPCFail     = "ErrRPCFail"
 )
 
 type Err string
@@ -23,6 +24,9 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	RPCID        int
+	ClerkID      int
+	SuccessRPCID int
 }
 
 type PutAppendReply struct {
@@ -32,6 +36,9 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+	ClerkID      int
+	RPCID        int
+	SuccessRPCID int
 }
 
 type GetReply struct {
@@ -45,12 +52,21 @@ func (ck *Clerk) RPCWrapper(info raft.RPCInfo, replyCh chan interface{}) {
 	switch args := info.Args.(type) {
 	case GetArgs:
 		reply := info.Reply.(GetReply)
-		ck.servers[info.Peer].Call(info.Name, &args, &reply)
-		info.Reply = reply
+		ok := ck.servers[info.Peer].Call(info.Name, &args, &reply)
+		if ok {
+			info.Reply = reply
+		} else {
+			info.Reply = GetReply{Err: ErrRPCFail}
+		}
 	case PutAppendArgs:
 		reply := info.Reply.(PutAppendReply)
-		ck.servers[info.Peer].Call(info.Name, &args, &reply)
-		info.Reply = reply
+		ok := ck.servers[info.Peer].Call(info.Name, &args, &reply)
+
+		if ok {
+			info.Reply = reply
+		} else {
+			info.Reply = PutAppendReply{Err: ErrRPCFail}
+		}
 	}
 
 	if time.Since(info.StartTime) < raft.RPCTimeout {

@@ -3,6 +3,7 @@ package kvraft
 import (
 	"crypto/rand"
 	"math/big"
+	"sync"
 	"time"
 
 	"6.824/labrpc"
@@ -12,12 +13,13 @@ import (
 const RETRY_INTERVAL = 200 * time.Millisecond
 
 type Clerk struct {
-	servers []*labrpc.ClientEnd
+	servers  []*labrpc.ClientEnd
+	nServers int
 
-	// a cluster consists of kv servers and a clerk
-	// for example, there are 3 kv servers(0,1,2), then clerkID is 3
-	clerkID   int
-	curLeader int
+	clerkID      int // a cluster consists of n kv servers and n clerks
+	curLeader    int // current leader of kv servers
+	RPCID        int // ID of RPC call(to prevent duplicate)
+	successRPCID int // max ID of successful RPC calls
 }
 
 func nrand() int64 {
@@ -27,11 +29,21 @@ func nrand() int64 {
 	return x
 }
 
+var nClerk int
+var nClerkMu sync.Mutex
+
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.nServers = len(servers)
+	ck.successRPCID = 0
+	ck.RPCID = 1
 
-	ck.clerkID = len(ck.servers)
+	nClerkMu.Lock()
+	ck.clerkID = nClerk
+	nClerk++
+	nClerkMu.Unlock()
+
 	return ck
 }
 
@@ -48,29 +60,37 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 	args := GetArgs{
-		Key: key,
+		Key:          key,
+		ClerkID:      ck.clerkID,
+		RPCID:        ck.RPCID,
+		SuccessRPCID: ck.successRPCID,
 	}
 
+	var val string
 	for {
 		reply := ck.issueGetRPC(args)
 		if reply.Err == OK {
-			raft.DebugLog(raft.DCallGet, ck.clerkID, "Get SUCCESS: {%s: %s}", key, reply.Value)
-			return reply.Value
+			raft.DebugLog(raft.DCallGet, ck.nServers, "CK %d: Get SUCCESS: {%s: %s}", ck.clerkID, key, reply.Value)
+			val = reply.Value
+			break
 		} else if reply.Err == ErrNoKey {
-			raft.DebugLog(raft.DCallGet, ck.clerkID, "GET FAIL: No Such Key(%s) in DB", key)
-			return reply.Value
+			raft.DebugLog(raft.DCallGet, ck.nServers, "CK %d: GET FAIL: No Such Key(%s) in DB", ck.clerkID, key)
+			val = reply.Value
+			break
 		}
 
-		raft.DebugLog(raft.DCallGet, ck.clerkID, "Get FAIL: %s", reply.Err)
-		if reply.Err == ErrWrongLeader {
-			ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
-		}
+		raft.DebugLog(raft.DCallGet, ck.nServers, "CK %d: Get FAIL: %s", ck.clerkID, reply.Err)
+		ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
 		time.Sleep(RETRY_INTERVAL)
 	}
+
+	ck.successRPCID = ck.RPCID
+	ck.RPCID++
+	return val
 }
 
 func (ck *Clerk) issueGetRPC(args GetArgs) GetReply {
-	raft.DebugLog(raft.DCallGet, ck.clerkID, "Get %s", args.Key)
+	raft.DebugLog(raft.DCallGet, ck.nServers, "CK %d: Get %s", ck.clerkID, args.Key)
 	rpcInfo := raft.RPCInfo{
 		Peer:  ck.curLeader,
 		Name:  "KVServer.Get",
@@ -101,29 +121,35 @@ func (ck *Clerk) issueGetRPC(args GetArgs) GetReply {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	args := PutAppendArgs{
-		Key:   key,
-		Value: value,
-		Op:    op,
+		Key:          key,
+		Value:        value,
+		Op:           op,
+		RPCID:        ck.RPCID,
+		ClerkID:      ck.clerkID,
+		SuccessRPCID: ck.successRPCID,
 	}
 
 	for {
 		reply := ck.issuePutAppendRPC(args)
 		if reply.Err == OK {
-			raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s} SUCCESS", op, key, value)
+			raft.DebugLog(raft.DCallPutOrAppend, ck.nServers, "CK %d: %s {%s:%s} SUCCESS", ck.clerkID, op, key, value)
 			break
 		}
 
-		raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s} FAIL: %s", op, key, value, reply.Err)
-		if reply.Err == ErrWrongLeader {
-			ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
-		}
+		raft.DebugLog(raft.DCallPutOrAppend, ck.nServers, "CK %d: %s {%s:%s} FAIL: %s", ck.clerkID, op, key, value, reply.Err)
+		ck.curLeader = (ck.curLeader + 1) % len(ck.servers)
 
 		time.Sleep(RETRY_INTERVAL)
 	}
+
+	ck.successRPCID = ck.RPCID
+	ck.RPCID++
 }
 
 func (ck *Clerk) issuePutAppendRPC(args PutAppendArgs) PutAppendReply {
-	raft.DebugLog(raft.DCallPutOrAppend, ck.clerkID, "%s {%s:%s}", args.Op, args.Key, args.Value)
+	raft.DebugLog(raft.DCallPutOrAppend, ck.nServers, "CK %d: %s {%s:%s}; ID: %d",
+		ck.clerkID, args.Op, args.Key, args.Value, args.RPCID)
+
 	rpcInfo := raft.RPCInfo{
 		Peer:  ck.curLeader,
 		Name:  "KVServer.PutAppend",
