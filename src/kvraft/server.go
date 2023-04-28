@@ -1,7 +1,6 @@
 package kvraft
 
 import (
-	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -31,17 +30,22 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	term int // current term of raft peer
 	cond *sync.Cond
 	db   map[string]string
 
 	// clerkID -> `RPCID` of lastly executed RPC call
-	executed map[int][]int
+	lastExecuted map[int]int
+
+	// clerkID -> ID of waiting RPC calls
+	rpcRequests map[int][]int
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
-	_, isLeader := kv.rf.GetState()
+	term, isLeader := kv.rf.GetState()
+
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
@@ -49,11 +53,9 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 
-	idx := sort.Search(len(kv.executed[args.ClerkID]), func(i int) bool {
-		return kv.executed[args.ClerkID][i] == args.SuccessRPCID
-	})
-	if idx != len(kv.executed[args.ClerkID]) {
-		kv.executed[args.ClerkID] = kv.executed[args.ClerkID][idx+1:]
+	if kv.term < term {
+		kv.cond.Broadcast()
+		kv.term = term
 	}
 
 	op := Op{
@@ -63,15 +65,22 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		RPCID:   args.RPCID,
 	}
 
+	kv.rpcRequests[args.ClerkID] = append(kv.rpcRequests[args.ClerkID], args.RPCID)
+	raft.DebugLog(raft.DReplyGet, kv.me, "rpcRequest[%d]:%v", args.ClerkID, kv.rpcRequests[args.ClerkID])
 	kv.rf.Start(op)
 	kv.cond.Wait()
 
-	_, isLeader = kv.rf.GetState()
+	term, isLeader = kv.rf.GetState()
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
 		kv.mu.Unlock()
 		return
+	}
+
+	if kv.term < term {
+		kv.cond.Broadcast()
+		kv.term = term
 	}
 
 	reply.Value = kv.db[args.Key]
@@ -85,7 +94,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
 
-	_, isLeader := kv.rf.GetState()
+	term, isLeader := kv.rf.GetState()
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
@@ -93,11 +102,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 
-	idx := sort.Search(len(kv.executed[args.ClerkID]), func(i int) bool {
-		return kv.executed[args.ClerkID][i] == args.SuccessRPCID
-	})
-	if idx != len(kv.executed[args.ClerkID]) {
-		kv.executed[args.ClerkID] = kv.executed[args.ClerkID][idx+1:]
+	if kv.term < term {
+		kv.cond.Broadcast()
+		kv.term = term
 	}
 
 	op := Op{
@@ -108,10 +115,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		RPCID:   args.RPCID,
 	}
 
+	kv.rpcRequests[args.ClerkID] = append(kv.rpcRequests[args.ClerkID], args.RPCID)
+	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "rpcRequests[%d]:%v", op.ClerkID, kv.rpcRequests[op.ClerkID])
 	kv.rf.Start(op)
 	kv.cond.Wait()
 
-	_, isLeader = kv.rf.GetState()
+	term, isLeader = kv.rf.GetState()
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reject: %s", reply.Err)
@@ -119,8 +128,14 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 
+	if kv.term < term {
+		kv.cond.Broadcast()
+		kv.term = term
+	}
+
 	reply.Err = OK
-	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reply %s: SUCCESS; db[%s]:%s", args.Op, args.Key, kv.db[args.Key])
+	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "Reply %s{%s:%s}: SUCCESS; db[%s]:%s",
+		args.Op, args.Key, args.Value, args.Key, kv.db[args.Key])
 	kv.mu.Unlock()
 }
 
@@ -153,12 +168,8 @@ func (kv *KVServer) readApplyCh() {
 		op := msg.Command.(Op)
 
 		// search if this op has already been executed
-		idx := sort.Search(len(kv.executed[op.ClerkID]), func(i int) bool {
-			return kv.executed[op.ClerkID][i] == op.RPCID
-		})
-
 		// not executed
-		if idx == len(kv.executed[op.ClerkID]) {
+		if kv.lastExecuted[op.ClerkID] < op.RPCID {
 			switch op.Type {
 			case "Put":
 				kv.db[op.Key] = op.Value
@@ -167,10 +178,34 @@ func (kv *KVServer) readApplyCh() {
 			}
 			raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "(CK:%d,RPC:%d,Op:%s,Key:%s,Value:%s): db[%s]==%s",
 				op.ClerkID, op.RPCID, op.Type, op.Key, op.Value, op.Key, kv.db[op.Key])
-			kv.executed[op.ClerkID] = append(kv.executed[op.ClerkID], op.RPCID)
+			raft.DebugLog(raft.DReplyGet, kv.me, "lastExecuted[%d]: %d -> %d", op.ClerkID,
+				kv.lastExecuted[op.ClerkID], op.RPCID)
+			kv.lastExecuted[op.ClerkID] = op.RPCID
 		}
-		kv.mu.Unlock()
-		kv.cond.Signal()
+
+		_, isLeader := kv.rf.GetState()
+		if !isLeader {
+			kv.mu.Unlock()
+			continue
+		}
+
+		i := 0
+		for ; i < len(kv.rpcRequests[op.ClerkID]); i++ {
+			if kv.rpcRequests[op.ClerkID][i] >= op.RPCID {
+				break
+			}
+		}
+		kv.rpcRequests[op.ClerkID] = kv.rpcRequests[op.ClerkID][i:]
+		raft.DebugLog(raft.DReplyGet, kv.me, "rpcRequests[%d]:%v", op.ClerkID, kv.rpcRequests[op.ClerkID])
+
+		if len(kv.rpcRequests[op.ClerkID]) != 0 && kv.rpcRequests[op.ClerkID][0] == op.RPCID {
+			kv.rpcRequests[op.ClerkID] = kv.rpcRequests[op.ClerkID][1:]
+			raft.DebugLog(raft.DReplyGet, kv.me, "rpcRequests[%d]:%v", op.ClerkID, kv.rpcRequests[op.ClerkID])
+			kv.mu.Unlock()
+			kv.cond.Signal()
+		} else {
+			kv.mu.Unlock()
+		}
 	}
 }
 
@@ -203,7 +238,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.cond = sync.NewCond(&kv.mu)
 	kv.db = make(map[string]string)
-	kv.executed = make(map[int][]int)
+	kv.lastExecuted = make(map[int]int)
+	kv.rpcRequests = make(map[int][]int)
 
 	go kv.readApplyCh()
 
