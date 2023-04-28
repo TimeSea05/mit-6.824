@@ -89,14 +89,14 @@ func DebugLog(topic string, peer int, format string, a ...interface{}) (n int, e
 	return
 }
 
-func minInt(a int, b int) int {
+func MinInt(a int, b int) int {
 	if a <= b {
 		return a
 	}
 	return b
 }
 
-func maxInt(a int, b int) int {
+func MaxInt(a int, b int) int {
 	if a >= b {
 		return a
 	}

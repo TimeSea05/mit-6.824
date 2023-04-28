@@ -101,7 +101,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 			return
 		}
 
-		rf.commitIndex = minInt(args.LeaderCommit, rf.lastIncludedIdx+len(rf.log))
+		rf.commitIndex = MinInt(args.LeaderCommit, rf.lastIncludedIdx+len(rf.log))
 		DebugLog(dCommit, rf.me, "SET commitIndex -> %d", rf.commitIndex)
 	}
 
@@ -229,7 +229,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 5. if leaderCommit > commitIndex, set commmitIndex =
 	// min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = minInt(args.LeaderCommit, rf.lastIncludedIdx+len(rf.log))
+		rf.commitIndex = MinInt(args.LeaderCommit, rf.lastIncludedIdx+len(rf.log))
 		DebugLog(dCommit, rf.me, "SET CommitIndex -> %d", rf.commitIndex)
 	}
 

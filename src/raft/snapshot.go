@@ -53,12 +53,12 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 	}
 
 	// Reset state machine using snapshot contents
-	rf.lastIncludedIdx = maxInt(rf.lastIncludedIdx, args.LastIncludedIndex)
-	rf.lastIncludedTerm = maxInt(rf.lastIncludedTerm, args.LastIncludedTerm)
+	rf.lastIncludedIdx = MaxInt(rf.lastIncludedIdx, args.LastIncludedIndex)
+	rf.lastIncludedTerm = MaxInt(rf.lastIncludedTerm, args.LastIncludedTerm)
 	rf.currentTerm = args.Term
 
-	rf.commitIndex = maxInt(rf.commitIndex, args.LastIncludedIndex)
-	rf.lastApplied = maxInt(rf.lastApplied, args.LastIncludedIndex)
+	rf.commitIndex = MaxInt(rf.commitIndex, args.LastIncludedIndex)
+	rf.lastApplied = MaxInt(rf.lastApplied, args.LastIncludedIndex)
 	DebugLog(dRaftState, rf.me, "LII:%d,LIT:%d,CT:%d,CI:%d,LA:%d",
 		rf.lastIncludedIdx, rf.lastIncludedTerm, rf.currentTerm,
 		rf.commitIndex, rf.lastApplied)
