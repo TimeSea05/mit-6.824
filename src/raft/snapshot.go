@@ -19,7 +19,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.lastIncludedIdx = index
 	DebugLog(dSnapshot, rf.me, "Take Snapshot; LL:%d,LII:%d,LIT:%d", len(rf.log), rf.lastIncludedIdx, rf.lastIncludedTerm)
 
-	rf.persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
+	rf.Persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
@@ -62,7 +62,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 	DebugLog(dRaftState, rf.me, "LII:%d,LIT:%d,CT:%d,CI:%d,LA:%d",
 		rf.lastIncludedIdx, rf.lastIncludedTerm, rf.currentTerm,
 		rf.commitIndex, rf.lastApplied)
-	rf.persister.SaveStateAndSnapshot(rf.encodeState(), args.Data)
+	rf.Persister.SaveStateAndSnapshot(rf.encodeState(), args.Data)
 
 	if args.LastIncludedIndex >= rf.commitIndex {
 		DebugLog(dSnapshot, rf.me, "APPLY Snapshot")
@@ -85,7 +85,7 @@ func (rf *Raft) issueInstallSnapshotRPC(peer int) int {
 		LeaderID:          rf.me,
 		LastIncludedIndex: rf.lastIncludedIdx,
 		LastIncludedTerm:  rf.lastIncludedTerm,
-		Data:              rf.persister.ReadSnapshot(),
+		Data:              rf.Persister.ReadSnapshot(),
 	}
 	rf.mu.Unlock()
 

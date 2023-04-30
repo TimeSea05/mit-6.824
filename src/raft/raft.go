@@ -65,7 +65,7 @@ type LogEntry struct {
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
+	Persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
@@ -106,7 +106,7 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	rf.persister.SaveRaftState(rf.encodeState())
+	rf.Persister.SaveRaftState(rf.encodeState())
 
 	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d}; LII;%d,LIT:%d",
 		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term, rf.lastIncludedIdx, rf.lastIncludedTerm)
@@ -227,7 +227,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
 		peers:     peers,
-		persister: persister,
+		Persister: persister,
 		me:        me,
 
 		// Your initialization code here (2A, 2B, 2C).
