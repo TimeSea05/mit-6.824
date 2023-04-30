@@ -16,10 +16,9 @@ type Clerk struct {
 	servers  []*labrpc.ClientEnd
 	nServers int
 
-	clerkID      int // a cluster consists of n kv servers and n clerks
-	curLeader    int // current leader of kv servers
-	RPCID        int // ID of RPC call(to prevent duplicate)
-	successRPCID int // max ID of successful RPC calls
+	clerkID   int // a cluster consists of n kv servers and n clerks
+	curLeader int // current leader of kv servers
+	RPCID     int // ID of RPC call(to prevent duplicate)
 }
 
 func nrand() int64 {
@@ -36,7 +35,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	ck.nServers = len(servers)
-	ck.successRPCID = 0
 	ck.RPCID = 1
 
 	nClerkMu.Lock()
@@ -60,10 +58,9 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 	args := GetArgs{
-		Key:          key,
-		ClerkID:      ck.clerkID,
-		RPCID:        ck.RPCID,
-		SuccessRPCID: ck.successRPCID,
+		Key:     key,
+		ClerkID: ck.clerkID,
+		RPCID:   ck.RPCID,
 	}
 
 	var val string
@@ -84,7 +81,6 @@ func (ck *Clerk) Get(key string) string {
 		time.Sleep(RETRY_INTERVAL)
 	}
 
-	ck.successRPCID = ck.RPCID
 	ck.RPCID++
 	return val
 }
@@ -121,12 +117,11 @@ func (ck *Clerk) issueGetRPC(args GetArgs) GetReply {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	args := PutAppendArgs{
-		Key:          key,
-		Value:        value,
-		Op:           op,
-		RPCID:        ck.RPCID,
-		ClerkID:      ck.clerkID,
-		SuccessRPCID: ck.successRPCID,
+		Key:     key,
+		Value:   value,
+		Op:      op,
+		RPCID:   ck.RPCID,
+		ClerkID: ck.clerkID,
 	}
 
 	for {
@@ -142,7 +137,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		time.Sleep(RETRY_INTERVAL)
 	}
 
-	ck.successRPCID = ck.RPCID
 	ck.RPCID++
 }
 
