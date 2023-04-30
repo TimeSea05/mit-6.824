@@ -90,7 +90,7 @@ func (ck *Clerk) Get(key string) string {
 }
 
 func (ck *Clerk) issueGetRPC(args GetArgs) GetReply {
-	raft.DebugLog(raft.DCallGet, ck.nServers, "CK %d: Get %s", ck.clerkID, args.Key)
+	raft.DebugLog(raft.DCallGet, ck.nServers, "CK %d: Get %s; ID:%d", ck.clerkID, args.Key, args.RPCID)
 	rpcInfo := raft.RPCInfo{
 		Peer:  ck.curLeader,
 		Name:  "KVServer.Get",
