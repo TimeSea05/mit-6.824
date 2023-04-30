@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -16,6 +17,11 @@ type Op struct {
 	Type    string // Get, Put or Append
 	Key     string
 	Value   string
+	ClerkID int
+	RPCID   int
+}
+
+type ClientRequest struct {
 	ClerkID int
 	RPCID   int
 }
@@ -37,8 +43,8 @@ type KVServer struct {
 	// clerkID -> `RPCID` of lastly executed RPC call
 	lastExecuted map[int]int
 
-	// clerkID -> ID of waiting RPC calls
-	rpcRequests map[int][]int
+	// waiting RPC calls
+	waitingReqs []ClientRequest
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -53,9 +59,15 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 
+	// If a change in the term is detected, it means that this server has become the new leader.
+	// Regardless of whether this server has been a leader before, it should broadcast
+	// on the conditional variable to clear the threads that were sleeping on the conditional variable before
+	// (even if these threads have already timed out).
+	// At the same time, slice `kv.waitingReqs` should also be cleared
 	if kv.term < term {
-		kv.cond.Broadcast()
 		kv.term = term
+		kv.cond.Broadcast()
+		kv.waitingReqs = nil
 	}
 
 	op := Op{
@@ -65,8 +77,14 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		RPCID:   args.RPCID,
 	}
 
-	kv.rpcRequests[args.ClerkID] = append(kv.rpcRequests[args.ClerkID], args.RPCID)
-	raft.DebugLog(raft.DReplyGet, kv.me, "rpcRequest[%d]:%v", args.ClerkID, kv.rpcRequests[args.ClerkID])
+	kv.waitingReqs = append(kv.waitingReqs, ClientRequest{ClerkID: args.ClerkID, RPCID: args.RPCID})
+	// logging about RPC calls waiting on this key-value server
+	waitingReqsStr := "waitingReqs:["
+	for _, r := range kv.waitingReqs {
+		waitingReqsStr += fmt.Sprintf("%d:%d;", r.ClerkID, r.RPCID)
+	}
+	raft.DebugLog(raft.DReplyGet, kv.me, "%s]", waitingReqsStr)
+
 	kv.rf.Start(op)
 	kv.cond.Wait()
 
@@ -79,8 +97,9 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 
 	if kv.term < term {
-		kv.cond.Broadcast()
 		kv.term = term
+		kv.cond.Broadcast()
+		kv.waitingReqs = nil
 	}
 
 	reply.Value = kv.db[args.Key]
@@ -103,8 +122,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	if kv.term < term {
-		kv.cond.Broadcast()
 		kv.term = term
+		kv.cond.Broadcast()
+		kv.waitingReqs = nil
 	}
 
 	op := Op{
@@ -115,8 +135,14 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		RPCID:   args.RPCID,
 	}
 
-	kv.rpcRequests[args.ClerkID] = append(kv.rpcRequests[args.ClerkID], args.RPCID)
-	raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "rpcRequests[%d]:%v", op.ClerkID, kv.rpcRequests[op.ClerkID])
+	kv.waitingReqs = append(kv.waitingReqs, ClientRequest{ClerkID: args.ClerkID, RPCID: args.RPCID})
+	// logging about RPC calls waiting on this key-value server
+	waitingReqsStr := "waitingReqs:["
+	for _, r := range kv.waitingReqs {
+		waitingReqsStr += fmt.Sprintf("%d:%d;", r.ClerkID, r.RPCID)
+	}
+	raft.DebugLog(raft.DReplyGet, kv.me, "%s]", waitingReqsStr)
+
 	kv.rf.Start(op)
 	kv.cond.Wait()
 
@@ -129,8 +155,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	if kv.term < term {
-		kv.cond.Broadcast()
 		kv.term = term
+		kv.cond.Broadcast()
+		kv.waitingReqs = nil
 	}
 
 	reply.Err = OK
@@ -167,8 +194,7 @@ func (kv *KVServer) readApplyCh() {
 		kv.mu.Lock()
 		op := msg.Command.(Op)
 
-		// search if this op has already been executed
-		// not executed
+		// check if this op has already been executed
 		if kv.lastExecuted[op.ClerkID] < op.RPCID {
 			switch op.Type {
 			case "Put":
@@ -183,29 +209,23 @@ func (kv *KVServer) readApplyCh() {
 			kv.lastExecuted[op.ClerkID] = op.RPCID
 		}
 
+		// if this kv server is not leader, then it should not wake up
+		// threads waiting on its conditional variable
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.mu.Unlock()
 			continue
 		}
 
-		i := 0
-		for ; i < len(kv.rpcRequests[op.ClerkID]); i++ {
-			if kv.rpcRequests[op.ClerkID][i] >= op.RPCID {
-				break
-			}
-		}
-		kv.rpcRequests[op.ClerkID] = kv.rpcRequests[op.ClerkID][i:]
-		raft.DebugLog(raft.DReplyGet, kv.me, "rpcRequests[%d]:%v", op.ClerkID, kv.rpcRequests[op.ClerkID])
-
-		if len(kv.rpcRequests[op.ClerkID]) != 0 && kv.rpcRequests[op.ClerkID][0] == op.RPCID {
-			kv.rpcRequests[op.ClerkID] = kv.rpcRequests[op.ClerkID][1:]
-			raft.DebugLog(raft.DReplyGet, kv.me, "rpcRequests[%d]:%v", op.ClerkID, kv.rpcRequests[op.ClerkID])
-			kv.mu.Unlock()
+		// Only when there are threads waiting on `kv.cond`: len(kv.waitingReqs > 0)
+		// and `ClerkID` && `RPCID` of the log entry commited just now is the same as
+		// the first thread waiting on `kv.cond`'s queue,
+		// can we use `kv.cond.Signal` to wake up the first thread waiting on `kv.cond`
+		if len(kv.waitingReqs) > 0 && kv.waitingReqs[0].ClerkID == op.ClerkID && kv.waitingReqs[0].RPCID == op.RPCID {
 			kv.cond.Signal()
-		} else {
-			kv.mu.Unlock()
+			kv.waitingReqs = kv.waitingReqs[1:]
 		}
+		kv.mu.Unlock()
 	}
 }
 
@@ -238,8 +258,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.cond = sync.NewCond(&kv.mu)
 	kv.db = make(map[string]string)
+
 	kv.lastExecuted = make(map[int]int)
-	kv.rpcRequests = make(map[int][]int)
+	kv.waitingReqs = make([]ClientRequest, 0)
 
 	go kv.readApplyCh()
 
