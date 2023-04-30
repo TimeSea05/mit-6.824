@@ -110,11 +110,6 @@ func (rf *Raft) persist() {
 
 	DebugLog(dPersist, rf.me, "SAVE: CT:%d; V:{ID:%d,T:%d}; LII;%d,LIT:%d",
 		rf.currentTerm, rf.vote.CandidateID, rf.vote.Term, rf.lastIncludedIdx, rf.lastIncludedTerm)
-	logStr := "SAVE: Log["
-	for idx, entry := range rf.log {
-		logStr += fmt.Sprintf("I:%d,T:%d;", idx+(rf.lastIncludedIdx+1), entry.Term)
-	}
-	DebugLog(dPersist, rf.me, "%s]", logStr)
 }
 
 // restore previously persisted state.
