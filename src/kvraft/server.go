@@ -1,7 +1,9 @@
 package kvraft
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 
@@ -36,9 +38,10 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	term int // current term of raft peer
-	cond *sync.Cond
-	db   map[string]string
+	term        int // current term of raft peer
+	commitIndex int // committed log index of raft peer
+	cond        *sync.Cond
+	db          map[string]string
 
 	// clerkID -> `RPCID` of lastly executed RPC call
 	lastExecuted map[int]int
@@ -190,43 +193,93 @@ func (kv *KVServer) readApplyCh() {
 		if kv.killed() {
 			return
 		}
-
 		kv.mu.Lock()
-		op := msg.Command.(Op)
 
-		// check if this op has already been executed
-		if kv.lastExecuted[op.ClerkID] < op.RPCID {
-			switch op.Type {
-			case "Put":
-				kv.db[op.Key] = op.Value
-			case "Append":
-				kv.db[op.Key] += op.Value
+		if msg.SnapshotValid { // install a snapshot
+			kv.ingestSnapshot(msg.Snapshot)
+		} else if msg.CommandValid { // commit a log entry
+			op := msg.Command.(Op)
+			kv.commitIndex = msg.CommandIndex
+
+			// check if this op has already been executed
+			if kv.lastExecuted[op.ClerkID] < op.RPCID {
+				switch op.Type {
+				case "Put":
+					kv.db[op.Key] = op.Value
+				case "Append":
+					kv.db[op.Key] += op.Value
+				}
+				raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "(CK:%d,RPC:%d,Op:%s,Key:%s,Value:%s): db[%s]==%s",
+					op.ClerkID, op.RPCID, op.Type, op.Key, op.Value, op.Key, kv.db[op.Key])
+				raft.DebugLog(raft.DReplyGet, kv.me, "lastExecuted[%d]: %d -> %d", op.ClerkID,
+					kv.lastExecuted[op.ClerkID], op.RPCID)
+				kv.lastExecuted[op.ClerkID] = op.RPCID
 			}
-			raft.DebugLog(raft.DReplyPutOrAppend, kv.me, "(CK:%d,RPC:%d,Op:%s,Key:%s,Value:%s): db[%s]==%s",
-				op.ClerkID, op.RPCID, op.Type, op.Key, op.Value, op.Key, kv.db[op.Key])
-			raft.DebugLog(raft.DReplyGet, kv.me, "lastExecuted[%d]: %d -> %d", op.ClerkID,
-				kv.lastExecuted[op.ClerkID], op.RPCID)
-			kv.lastExecuted[op.ClerkID] = op.RPCID
+
+			if kv.maxraftstate != -1 && kv.rf.Persister.RaftStateSize() > kv.maxraftstate {
+				raft.DebugLog(raft.DSnapshot, kv.me, "Take Snapshot, Index:%d", kv.commitIndex)
+				kv.rf.Snapshot(kv.commitIndex, kv.takeSnapshot())
+			}
+
+			// if this kv server is not leader, then it should not wake up
+			// threads waiting on its conditional variable
+			_, isLeader := kv.rf.GetState()
+			if !isLeader {
+				kv.mu.Unlock()
+				continue
+			}
+
+			// Only when there are threads waiting on `kv.cond`: len(kv.waitingReqs > 0)
+			// and `ClerkID` && `RPCID` of the log entry commited just now is the same as
+			// the first thread waiting on `kv.cond`'s queue,
+			// can we use `kv.cond.Signal` to wake up the first thread waiting on `kv.cond`
+			if len(kv.waitingReqs) > 0 && kv.waitingReqs[0].ClerkID == op.ClerkID && kv.waitingReqs[0].RPCID == op.RPCID {
+				kv.cond.Signal()
+				kv.waitingReqs = kv.waitingReqs[1:]
+			}
 		}
 
-		// if this kv server is not leader, then it should not wake up
-		// threads waiting on its conditional variable
-		_, isLeader := kv.rf.GetState()
-		if !isLeader {
-			kv.mu.Unlock()
-			continue
-		}
-
-		// Only when there are threads waiting on `kv.cond`: len(kv.waitingReqs > 0)
-		// and `ClerkID` && `RPCID` of the log entry commited just now is the same as
-		// the first thread waiting on `kv.cond`'s queue,
-		// can we use `kv.cond.Signal` to wake up the first thread waiting on `kv.cond`
-		if len(kv.waitingReqs) > 0 && kv.waitingReqs[0].ClerkID == op.ClerkID && kv.waitingReqs[0].RPCID == op.RPCID {
-			kv.cond.Signal()
-			kv.waitingReqs = kv.waitingReqs[1:]
-		}
 		kv.mu.Unlock()
 	}
+}
+
+func (kv *KVServer) takeSnapshot() []byte {
+	buf := new(bytes.Buffer)
+	encoder := labgob.NewEncoder(buf)
+
+	encoder.Encode(kv.term)
+	encoder.Encode(kv.db)
+	encoder.Encode(kv.lastExecuted)
+
+	return buf.Bytes()
+}
+
+// make sure that you hold the lock `kv.mu` when you call this function
+// or data race will be detected
+func (kv *KVServer) ingestSnapshot(snapshot []byte) {
+	buf := bytes.NewBuffer(snapshot)
+	decoder := labgob.NewDecoder(buf)
+
+	var term int
+	db := make(map[string]string)
+	lastExecuted := make(map[int]int)
+
+	if err := decoder.Decode(&term); err != nil {
+		log.Fatalf("Decode field `term` failed: %v", err)
+	}
+	if err := decoder.Decode(&db); err != nil {
+		log.Fatalf("Decode field `db` failed: %v", err)
+	}
+	if err := decoder.Decode(&lastExecuted); err != nil {
+		log.Fatalf("Decode field `lastExecuted` failed: %v", err)
+	}
+
+	kv.term = term
+	kv.db = db
+	kv.lastExecuted = lastExecuted
+	raft.DebugLog(raft.DSnapshot, kv.me, "LOAD from snapshot; kv.term:%d", kv.term)
+	raft.DebugLog(raft.DSnapshot, kv.me, "kv.db: %v", kv.db)
+	raft.DebugLog(raft.DSnapshot, kv.me, "kv.lastExecuted:%v", kv.lastExecuted)
 }
 
 // servers[] contains the ports of the set of
@@ -261,6 +314,11 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.lastExecuted = make(map[int]int)
 	kv.waitingReqs = make([]ClientRequest, 0)
+
+	snapshot := kv.rf.Persister.ReadSnapshot()
+	if len(snapshot) > 0 {
+		kv.ingestSnapshot(snapshot)
+	}
 
 	go kv.readApplyCh()
 
