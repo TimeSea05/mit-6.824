@@ -175,13 +175,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	prevLogIndexOutOfBounds := args.PrevLogIndex-(rf.lastIncludedIdx+1) >= len(rf.log)
 	prevLogIndexBeforeFirst := args.PrevLogIndex-(rf.lastIncludedIdx+1) < -1
 	prevLogIndexMismatchSnapshot := args.PrevLogIndex == rf.lastIncludedIdx && rf.lastIncludedTerm != args.PrevLogTerm
-	prevLogIndexMismatchLogTerm := args.PrevLogIndex-rf.lastIncludedIdx > 0 && rf.log[args.PrevLogIndex-(rf.lastIncludedIdx+1)].Term != args.PrevLogTerm
 
-	if prevLogIndexOutOfBounds || prevLogIndexBeforeFirst ||
-		prevLogIndexMismatchSnapshot || prevLogIndexMismatchLogTerm {
+	if prevLogIndexOutOfBounds || prevLogIndexBeforeFirst || prevLogIndexMismatchSnapshot {
+		*reply = AppendEntriesReply{
+			Term:      rf.currentTerm,
+			Success:   false,
+			InConsist: true,
+			XTerm:     rf.lastIncludedTerm,
+			XIndex:    rf.lastIncludedIdx + 1,
+		}
+		DebugLog(dAppend, rf.me, "REJECT: Log doesn't Match PrevLog;{XT:%d;XI:%d}", reply.XTerm, reply.XIndex)
+		rf.mu.Unlock()
+		return
+	}
+
+	prevLogIndexMismatchLogTerm := args.PrevLogIndex-rf.lastIncludedIdx > 0 && rf.log[args.PrevLogIndex-(rf.lastIncludedIdx+1)].Term != args.PrevLogTerm
+	if prevLogIndexMismatchLogTerm {
 		xTerm := rf.log[args.PrevLogIndex-(rf.lastIncludedIdx+1)].Term
 		xIndex := args.PrevLogIndex
-		for rf.log[xIndex-(rf.lastIncludedIdx+1)-1].Term == xTerm && xIndex-(rf.lastIncludedIdx+1) > 0 {
+		for xIndex-(rf.lastIncludedIdx+1)-1 >= 0 && rf.log[xIndex-(rf.lastIncludedIdx+1)-1].Term == xTerm {
 			xIndex--
 		}
 
