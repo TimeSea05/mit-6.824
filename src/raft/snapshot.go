@@ -14,6 +14,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if index-(rf.lastIncludedIdx+1) <= 0 || index-(rf.lastIncludedIdx+1) >= len(rf.log) {
+		return
+	}
+
 	rf.lastIncludedTerm = rf.log[index-(rf.lastIncludedIdx+1)].Term
 	rf.log = rf.log[index-rf.lastIncludedIdx:]
 	rf.lastIncludedIdx = index
@@ -28,7 +32,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, replyTerm *int) {
 
 	*replyTerm = rf.currentTerm
 	// Reply immediately if term < currentTerm
-	if args.Term < rf.currentTerm {
+	// or the received snapshot is outdated
+	if args.Term < rf.currentTerm || args.LastIncludedIndex < rf.lastIncludedIdx {
 		return
 	}
 
