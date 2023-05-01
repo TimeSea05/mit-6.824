@@ -38,6 +38,7 @@ const (
 	DCallPutOrAppend  = "CAPUT"
 	DReplyGet         = "REGET"
 	DReplyPutOrAppend = "REPUT"
+	DSnapshot         = "SSHOT"
 )
 
 // map topic -> debugLevel
